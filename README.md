@@ -1,35 +1,63 @@
-# MultiBusiness v1
+# MultiBusiness v1 — Independent Business Engine
 
-Flask-based mobile-first multi-business selling platform.
+Flask mobile-first business platform. The platform starts at `/start` only when no active business is registered. A business operator chooses **one** business type, completes the identity, and that choice becomes the active business world.
 
-## Run locally
+## Architecture
 
-```bash
-python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
+- `/` = visitor home for the registered business
+- `/start` = fresh business setup / new business world
+- `/authority` = private operating and management portal for the active business
+- QR codes open the current business and can deep-link directly to an item profile
+- There is no cross-business browsing or shared marketplace screen
+- To create another business world, use **Authority → Business settings → Reset business**, then return to `/start`
+
+## Complete v1 engines
+
+- Vehicles
+- Hotels & Lodges
+- Restaurants, Bars & Cafés
+- Real Estate & Property
+- Retail & General Marketplace
+
+## Engine-specific operations
+
+### Vehicles
+Vehicle records, photos, specifications, buying requests, finance requests, viewing requests, offers, seller intake and QR identity.
+
+### Hotels
+Room inventory with actual room numbers, availability, guest booking requests, service requests and Authority room management.
+
+### Restaurants
+Menu-style product records, orders, table reservations and Authority table management.
+
+### Property
+Property records, viewing requests, offers and rental requests.
+
+### Retail / Marketplace
+Product records, purchase / reserve actions, enquiries and seller intake.
+
+## Other selectable engines
+
+Marine, Electronics, Furniture, Equipment and Events are selectable but intentionally isolated from the complete engines. They can later be replaced by dedicated products/sites without mixing their data into the active business.
+
+## Technical
+
+- Flask
+- SQLite with WAL mode and busy-timeout / retry protection
+- JSON business export
+- ZIP backup containing JSON and SQLite database
+- Restore interface in Authority
+- QR generation using `qrcode`
+- Responsive CSS with mobile bottom navigation
+- Camera QR entry where the browser supports `BarcodeDetector`
+- Public errors are clean; technical failures are recorded under Authority → System Errors
+
+## Render
+
+Start command:
+
+```text
+gunicorn app:app
 ```
 
-Open `http://127.0.0.1:5000`.
-
-## Main routes
-
-- `/` opening/signature screen
-- `/setup` business onboarding
-- `/site` public storefront
-- `/browse` public catalogue
-- `/sell` seller submission area
-- `/qr` QR management
-- `/admin` private admin portal
-- `/admin/backup` backup/export/restore area
-- `/health` deployment health check
-
-## Data
-
-SQLite lives in `data/multibusiness.db`. A JSON export is maintained at `data/business.json`. Full backups are generated in `backups/` as ZIP files.
-
-## Notes
-
-Visitors and sellers do not need authentication in v1. The public pages are intended to be presentation-ready while the architecture stays modular for future business templates and role/authentication layers.
+Required packages are listed in `requirements.txt`.
