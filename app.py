@@ -277,15 +277,7 @@ def make_backup():
 @app.context_processor
 def inject_globals():
     b=get_business() or {}
-    business_type_labels={key: label for key, label, _ in BUSINESS_TYPES}
-    return {
-        'business': b,
-        'business_types': BUSINESS_TYPES,
-        'business_type_labels': business_type_labels,
-        'sections': SECTIONS,
-        'get_listings': get_listings,
-        'type_content': TYPE_CONTENT,
-    }
+    return {'business':b,'business_types':BUSINESS_TYPES,'business_type_labels':dict((x[0], x[1]) for x in BUSINESS_TYPES),'sections':SECTIONS,'get_listings':get_listings,'type_content':TYPE_CONTENT}
 
 
 @app.after_request
@@ -311,7 +303,7 @@ def setup():
         form=request.form
         conn=db()
         conn.execute('''UPDATE business SET name=?, business_type=?, location=?, phone=?, whatsapp=?, email=?, website=?, socials=?, description=?, logo=?, cover_image=?, contact_person=?, updated_at=? WHERE id=1''',(
-            form.get('name','Mavuno Market House').strip(), form.get('business_type','marketplace'), form.get('location','').strip(),form.get('phone','').strip(),form.get('whatsapp','').strip(),form.get('email','').strip(),form.get('website','').strip(),form.get('socials','').strip(),form.get('description','').strip(),form.get('logo','M').strip(),form.get('cover_image','').strip(),form.get('contact_person','').strip(),now()))
+            form.get('name','Mavuno Market House').strip(), (form.get('business_type') if form.get('business_type') in SECTIONS else 'marketplace'), form.get('location','').strip(),form.get('phone','').strip(),form.get('whatsapp','').strip(),form.get('email','').strip(),form.get('website','').strip(),form.get('socials','').strip(),form.get('description','').strip(),form.get('logo','M').strip(),form.get('cover_image','').strip(),form.get('contact_person','').strip(),now()))
         conn.execute('INSERT INTO activity(action,detail,created_at) VALUES (?,?,?)',('Business setup updated',form.get('name','')))
         conn.commit(); conn.close(); export_json()
         return redirect(url_for('site_home'))
@@ -321,9 +313,7 @@ def setup():
 @app.route('/site')
 def site_home():
     b=get_business(); typ=b['business_type']; listings=get_listings(typ=typ)
-    # Keep the public site populated even before a business has its own catalogue.
-    if not listings:
-        listings=get_listings()
+    # Show the selected business engine only. Never mix another business type into its storefront.
     return render_template('site_home.html', typ=typ, listings=listings[:12], categories=SECTIONS.get(typ,[]))
 
 
@@ -401,7 +391,8 @@ def qr_redirect(code):
 def admin():
     conn=db()
     metrics={
-        'vehicles':conn.execute("SELECT COUNT(*) n FROM listings WHERE type='vehicles'").fetchone()['n'],
+        'listings':conn.execute('SELECT COUNT(*) n FROM listings').fetchone()['n'],
+        'current_type':conn.execute("SELECT business_type FROM business WHERE id=1").fetchone()['business_type'],
         'available':conn.execute("SELECT COUNT(*) n FROM listings WHERE status='AVAILABLE'").fetchone()['n'],
         'sold':conn.execute("SELECT COUNT(*) n FROM listings WHERE status='SOLD'").fetchone()['n'],
         'pending':conn.execute("SELECT COUNT(*) n FROM seller_submissions WHERE status='PENDING'").fetchone()['n'],
@@ -463,11 +454,6 @@ def restore():
     except Exception as exc:
         flash(f'Restore failed: {exc}','error')
     return redirect(url_for('admin_backup'))
-
-
-@app.route('/favicon.ico')
-def favicon():
-    return ('', 204)
 
 
 @app.route('/health')
