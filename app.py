@@ -277,7 +277,15 @@ def make_backup():
 @app.context_processor
 def inject_globals():
     b=get_business() or {}
-    return {'business':b,'business_types':BUSINESS_TYPES,'sections':SECTIONS,'get_listings':get_listings,'type_content':TYPE_CONTENT}
+    business_type_labels={key: label for key, label, _ in BUSINESS_TYPES}
+    return {
+        'business': b,
+        'business_types': BUSINESS_TYPES,
+        'business_type_labels': business_type_labels,
+        'sections': SECTIONS,
+        'get_listings': get_listings,
+        'type_content': TYPE_CONTENT,
+    }
 
 
 @app.after_request
@@ -455,6 +463,11 @@ def restore():
     except Exception as exc:
         flash(f'Restore failed: {exc}','error')
     return redirect(url_for('admin_backup'))
+
+
+@app.route('/favicon.ico')
+def favicon():
+    return ('', 204)
 
 
 @app.route('/health')

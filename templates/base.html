@@ -12,7 +12,7 @@
 <body class="page-{{ request.endpoint or 'page' }}">
 <div id="splash" class="splash"><div class="signature">MULTIBUSINESS</div><div class="splash-line"></div><small>marketplace engine · v1</small></div>
 <header class="topbar" id="topbar">
-  <a class="brand" href="{{ url_for('site_home') }}"><span class="brand-mark">{{ business.logo or 'M' }}</span><span><strong>{{ business.name }}</strong><small>{{ dict((x[0],x[1]) for x in business_types).get(business.business_type,'Marketplace') }}</small></span></a>
+  <a class="brand" href="{{ url_for('site_home') }}"><span class="brand-mark">{{ business.logo or 'M' }}</span><span><strong>{{ business.name }}</strong><small>{{ business_type_labels.get(business.business_type, 'Marketplace') }}</small></span></a>
   <nav class="desktop-nav"><a href="{{ url_for('site_home') }}">Home</a><a href="{{ url_for('browse') }}">Browse</a><a href="{{ url_for('sell') }}">Sell</a><a href="{{ url_for('contact') }}">Contact</a><a href="{{ url_for('admin') }}" class="nav-admin">Admin</a></nav>
   <button class="menu-btn" id="menuBtn" aria-label="Open menu">☰</button>
 </header>
