@@ -1,13 +1,16 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, send_file, abort
+from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, send_file, abort, has_request_context
 from pathlib import Path
 from datetime import datetime
-import json, sqlite3, shutil, os, zipfile, io, re
+import json, sqlite3, shutil, os, zipfile, io, re, time, traceback
+from collections import deque
 import qrcode
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / 'data' / 'multibusiness.db'
 JSON_PATH = BASE_DIR / 'data' / 'business.json'
 BACKUP_DIR = BASE_DIR / 'backups'
+ERROR_LOG = BASE_DIR / 'data' / 'system_errors.jsonl'
+ERROR_MEMORY = deque(maxlen=100)
 
 app = Flask(__name__)
 app.secret_key = 'multibusiness-v1-demo-secret'
@@ -61,10 +64,69 @@ DEMO_CONTACTS = {
 
 
 def db():
-    conn = sqlite3.connect(DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=15, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
+    conn.execute('PRAGMA busy_timeout = 15000')
+    conn.execute('PRAGMA journal_mode = WAL')
+    conn.execute('PRAGMA synchronous = NORMAL')
     return conn
+
+
+def write_with_retry(conn, sql, params=(), retries=4):
+    last = None
+    for attempt in range(retries):
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute(sql, params)
+            conn.commit()
+            return
+        except sqlite3.OperationalError as exc:
+            last = exc
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            if 'locked' not in str(exc).lower() or attempt == retries - 1:
+                raise
+            time.sleep(0.25 * (attempt + 1))
+    if last:
+        raise last
+
+
+def log_system_error(error, endpoint=None):
+    record = {
+        'time': now(),
+        'endpoint': endpoint or (request.path if has_request_context() else None),
+        'method': request.method if has_request_context() else None,
+        'error_type': type(error).__name__,
+        'message': str(error),
+        'traceback': traceback.format_exc(),
+    }
+    ERROR_MEMORY.appendleft(record)
+    try:
+        ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with ERROR_LOG.open('a', encoding='utf-8') as f:
+            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+
+
+def read_system_errors(limit=100):
+    rows = list(ERROR_MEMORY)
+    try:
+        if ERROR_LOG.exists():
+            disk=[]
+            for line in ERROR_LOG.read_text(encoding='utf-8').splitlines()[-limit:]:
+                try:
+                    disk.append(json.loads(line))
+                except Exception:
+                    continue
+            rows = disk[::-1]
+    except Exception:
+        pass
+    return rows[:limit]
 
 
 def now():
@@ -257,10 +319,17 @@ def export_json():
             'listings':[dict(x) for x in listings], 'seller_submissions':[dict(x) for x in sellers],
             'enquiries':[dict(x) for x in enquiries], 'qr_codes':[dict(x) for x in qrs]
         }
-        JSON_PATH.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        tmp=JSON_PATH.with_suffix('.tmp')
+        tmp.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        tmp.replace(JSON_PATH)
         conn.close()
-    except Exception:
-        pass
+        return True
+    except Exception as exc:
+        try:
+            if conn: conn.close()
+        except Exception: pass
+        log_system_error(exc, 'export_json')
+        return False
 
 
 def make_backup():
@@ -298,14 +367,61 @@ def index():
 def setup():
     b=get_business() or {}
     if request.method=='GET' and request.args.get('type'):
-        b = dict(b); b['business_type'] = request.args.get('type')
+        selected=request.args.get('type')
+        b=dict(b); b['business_type'] = selected if selected in SECTIONS else b.get('business_type','marketplace')
     if request.method=='POST':
         form=request.form
-        conn=db()
-        conn.execute('''UPDATE business SET name=?, business_type=?, location=?, phone=?, whatsapp=?, email=?, website=?, socials=?, description=?, logo=?, cover_image=?, contact_person=?, updated_at=? WHERE id=1''',(
-            form.get('name','Mavuno Market House').strip(), (form.get('business_type') if form.get('business_type') in SECTIONS else 'marketplace'), form.get('location','').strip(),form.get('phone','').strip(),form.get('whatsapp','').strip(),form.get('email','').strip(),form.get('website','').strip(),form.get('socials','').strip(),form.get('description','').strip(),form.get('logo','M').strip(),form.get('cover_image','').strip(),form.get('contact_person','').strip(),now()))
-        conn.execute('INSERT INTO activity(action,detail,created_at) VALUES (?,?,?)',('Business setup updated',form.get('name','')))
-        conn.commit(); conn.close(); export_json()
+        business_type=form.get('business_type','marketplace').strip()
+        if business_type not in SECTIONS:
+            business_type='marketplace'
+        values=(
+            form.get('name','Mavuno Market House').strip() or 'Mavuno Market House',
+            business_type,
+            form.get('location','').strip(),
+            form.get('phone','').strip(),
+            form.get('whatsapp','').strip(),
+            form.get('email','').strip(),
+            form.get('website','').strip(),
+            form.get('socials','').strip(),
+            form.get('description','').strip(),
+            form.get('logo','M').strip() or 'M',
+            form.get('cover_image','').strip(),
+            form.get('contact_person','').strip(),
+            now(),
+        )
+        conn=None
+        try:
+            conn=db()
+            last_error=None
+            for attempt in range(5):
+                try:
+                    conn.execute('BEGIN IMMEDIATE')
+                    conn.execute('''UPDATE business SET name=?, business_type=?, location=?, phone=?, whatsapp=?, email=?, website=?, socials=?, description=?, logo=?, cover_image=?, contact_person=?, updated_at=? WHERE id=1''', values)
+                    conn.execute('INSERT INTO activity(action,detail,created_at) VALUES (?,?,?)', ('Business setup updated', values[0], now()))
+                    conn.commit()
+                    last_error=None
+                    break
+                except sqlite3.OperationalError as exc:
+                    last_error=exc
+                    try: conn.rollback()
+                    except Exception: pass
+                    if 'locked' not in str(exc).lower() or attempt == 4:
+                        raise
+                    time.sleep(0.35 * (attempt + 1))
+            if last_error is not None:
+                raise last_error
+        except Exception as exc:
+            if conn:
+                try: conn.rollback()
+                except Exception: pass
+            log_system_error(exc, '/setup')
+            flash('Business setup could not be saved. The system recorded the error for the administrator.', 'error')
+            return render_template('setup.html', business={**b, **dict(zip(['name','business_type','location','phone','whatsapp','email','website','socials','description','logo','cover_image','contact_person'], values[:12]))})
+        finally:
+            if conn:
+                conn.close()
+        export_json()
+        flash('Business profile updated. The storefront is now using the selected business type.', 'success')
         return redirect(url_for('site_home'))
     return render_template('setup.html', business=b)
 
@@ -407,6 +523,12 @@ def admin():
     return render_template('admin.html', metrics=metrics, activity=activity, submissions=submissions)
 
 
+@app.route('/admin/errors')
+def admin_errors():
+    errors = read_system_errors(100)
+    return render_template('system_errors.html', errors=errors)
+
+
 @app.route('/admin/listings')
 def admin_listings():
     listings=get_listings()
@@ -452,7 +574,8 @@ def restore():
         else:
             flash('The backup file did not contain a business profile.','error')
     except Exception as exc:
-        flash(f'Restore failed: {exc}','error')
+        log_system_error(exc, '/admin/restore')
+        flash('Restore failed. The administrator can review the recorded system error.','error')
     return redirect(url_for('admin_backup'))
 
 
@@ -461,9 +584,22 @@ def health():
     return jsonify({'status':'ok','app':'MultiBusiness v1','time':now()})
 
 
+@app.route('/favicon.ico')
+def favicon():
+    return ('', 204)
+
+
 @app.errorhandler(404)
 def not_found(e):
+    if request.path.startswith('/static/'):
+        return ('', 404)
     return render_template('error.html', code=404, message='The page you are looking for is not available.'),404
+
+
+@app.errorhandler(500)
+def internal_error(e):
+    log_system_error(e, request.path)
+    return render_template('error.html', code=500, message='Something went wrong. The administrator can review the recorded system error.'),500
 
 
 if __name__ == '__main__':

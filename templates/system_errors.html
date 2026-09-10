@@ -1,0 +1,4 @@
+{% extends 'base.html' %}{% block title %}System Errors{% endblock %}{% block content %}
+<section class="page-head"><div><span class="eyebrow">ADMIN · SYSTEM ERRORS</span><h1>Recorded application issues</h1><p class="lead">Errors stay behind the admin wall for troubleshooting. Visitors only see a clean failure message.</p></div><a class="btn btn-light" href="{{ url_for('admin') }}">Back to admin</a></section>
+<section class="section"><div class="admin-panel error-panel">{% if errors %}{% for e in errors %}<article class="error-record"><div class="error-meta"><strong>{{ e.error_type }}</strong><span>{{ e.time }}</span><span>{{ e.method }} {{ e.endpoint }}</span></div><h3>{{ e.message }}</h3><details><summary>View traceback</summary><pre>{{ e.traceback }}</pre></details></article>{% endfor %}{% else %}<div class="empty-state"><h3>No recorded system errors</h3><p>The error log is currently clean.</p></div>{% endif %}</div></section>
+{% endblock %}
