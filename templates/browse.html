@@ -1,1 +1,36 @@
-{% extends 'base.html' %}{% block title %}Browse · {{business.name}}{% endblock %}{% block content %}<section class="page-head"><span class="eyebrow">{{business_types[current_kind].name}}</span><h1>Find what you need</h1><form class="searchbar"><input name="q" value="{{q}}" placeholder="Search this business"><select name="category"><option value="">All types</option>{% for t in type_catalog %}<option value="{{t}}" {% if category==t %}selected{% endif %}>{{t}}</option>{% endfor %}</select><button class="primary">Search</button></form></section><section class="section"><div class="cards">{% for item in items %}<a class="card" href="{{url_for('item_detail',item_id=item.id)}}"><div class="card-image" style="background-image:url('{{item.image}}')"></div><div class="card-body"><span class="tag">{{item.status}}</span><h3>{{item.title if current_kind!='hotels' else 'Room ' ~ item.room_number}}</h3><p>{{item.price}}{% if current_kind=='hotels' %} · {{item.room_type}}{% else %} · {{item.location}}{% endif %}</p><small>{% if current_kind=='vehicles' %}{{item.category}}{% elif current_kind=='hotels' %}{{item.category}}{% else %}{{item.category}}{% endif %} · QR available</small></div></a>{% else %}<div class="empty">Nothing matched your search.</div>{% endfor %}</div></section>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Browse · {{business.name}}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <span class="eyebrow">{{business_types[current_kind].name}}</span>
+  <h1>Find your exact vehicle</h1>
+  <form class="searchbar" method="get">
+    <input name="q" value="{{q}}" placeholder="Search make, model, location or vehicle name">
+    <select name="category"><option value="">All vehicle types</option>{% for t in type_catalog %}<option value="{{t}}" {% if category==t %}selected{% endif %}>{{t}}</option>{% endfor %}</select>
+    <button class="primary">Search</button>
+  </form>
+</section>
+{% if current_kind == 'vehicles' %}
+<section class="filter-panel">
+  <div class="section-head"><div><span class="eyebrow">Deep catalogue</span><h2>Explore 400+ vehicle choices</h2><p>Types, makes, models, years, fuels, transmissions, locations and equipment are searchable without mixing records.</p></div></div>
+  <div class="filter-tools"><input id="filterSearch" placeholder="Filter these choices…" oninput="filterQuickChoices(this.value)"></div>
+  <div class="quick-filters" id="quickFilters">{% for label,value in vehicle_quick_filters %}<a href="{{url_for('browse')}}?filter={{value|urlencode}}" data-filter-label="{{label|lower}}">{{label}}</a>{% endfor %}</div>
+</section>
+{% endif %}
+<section class="section">
+  <div class="results-note">{{items|length}} matching records{% if quick %} · filtered by “{{quick}}”{% endif %}</div>
+  <div class="cards">
+    {% for item in items %}
+    <a class="card" href="{{url_for('item_detail',item_id=item.id)}}">
+      <div class="card-image" style="background-image:url('{{item.image}}')"></div>
+      <div class="card-body">
+        <span class="tag">{{item.status}}</span>
+        <h3>{{item.title if current_kind!='hotels' else 'Room ' ~ item.room_number}}</h3>
+        <p>{{item.price}}{% if current_kind=='hotels' %} · {{item.room_type}}{% else %} · {{item.location}}{% endif %}</p>
+        <small>{% if current_kind=='vehicles' %}<strong>{{item.make}} {{item.model}}</strong> · {{item.category}} · {{item.year}}{% elif current_kind=='hotels' %}{{item.category}}{% else %}{{item.category}}{% endif %} · QR available</small>
+      </div>
+    </a>
+    {% else %}<div class="empty">Nothing matched your search.</div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

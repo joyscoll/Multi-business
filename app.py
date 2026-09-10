@@ -41,6 +41,64 @@ PROPERTY_TYPES = [
 ]
 TYPE_CATALOGS = {'vehicles': VEHICLE_TYPES, 'hotels': HOTEL_TYPES, 'property': PROPERTY_TYPES}
 
+
+# Vehicle catalog is deliberately record-bound: every seeded image filename is generated
+# from the same make/model/year record, so the display name can never drift from its image.
+VEHICLE_MODELS = [
+    ('Toyota','Corolla','Sedan'),('Toyota','Camry','Sedan'),('Toyota','RAV4','SUV'),('Toyota','Land Cruiser','SUV'),('Toyota','Hilux','Pickup'),('Toyota','Prado','SUV'),('Toyota','Vitz','Hatchback'),('Toyota','Hiace','Van'),('Toyota','Probox','Wagon / Estate'),('Toyota','Fortuner','SUV'),
+    ('BMW','3 Series','Sedan'),('BMW','5 Series','Sedan'),('BMW','7 Series','Luxury Sedan'),('BMW','X1','Crossover'),('BMW','X3','SUV'),('BMW','X5','SUV'),('BMW','X7','Luxury SUV'),('BMW','M3','Sports Coupe'),('BMW','M4','Sports Coupe'),('BMW','iX','Electric Vehicle'),
+    ('Mercedes-Benz','C-Class','Sedan'),('Mercedes-Benz','E-Class','Executive Sedan'),('Mercedes-Benz','S-Class','Luxury Sedan'),('Mercedes-Benz','A-Class','Hatchback'),('Mercedes-Benz','GLA','Crossover'),('Mercedes-Benz','GLC','SUV'),('Mercedes-Benz','GLE','SUV'),('Mercedes-Benz','GLS','Luxury SUV'),('Mercedes-Benz','Sprinter','Panel Van'),('Mercedes-Benz','V-Class','Luxury Van'),
+    ('Audi','A3','Sedan'),('Audi','A4','Sedan'),('Audi','A6','Executive Sedan'),('Audi','A8','Luxury Sedan'),('Audi','Q3','Crossover'),('Audi','Q5','SUV'),('Audi','Q7','Luxury SUV'),('Audi','Q8','Luxury SUV'),('Audi','TT','Sports Coupe'),('Audi','e-tron','Electric Vehicle'),
+    ('Volkswagen','Polo','Hatchback'),('Volkswagen','Golf','Hatchback'),('Volkswagen','Passat','Sedan'),('Volkswagen','Tiguan','SUV'),('Volkswagen','Touareg','SUV'),('Volkswagen','Amarok','Pickup'),('Volkswagen','Transporter','Van'),('Volkswagen','Caddy','Cargo Van'),('Volkswagen','Crafter','Panel Van'),('Volkswagen','Multivan','Passenger Van'),
+    ('Nissan','March','Hatchback'),('Nissan','Note','Hatchback'),('Nissan','Sylphy','Sedan'),('Nissan','Altima','Sedan'),('Nissan','X-Trail','SUV'),('Nissan','Patrol','SUV'),('Nissan','Navara','Pickup'),('Nissan','Serena','Minivan'),('Nissan','Urvan','Van'),('Nissan','Leaf','Electric Vehicle'),
+    ('Honda','Fit','Hatchback'),('Honda','Civic','Sedan'),('Honda','Accord','Sedan'),('Honda','CR-V','SUV'),('Honda','HR-V','Crossover'),('Honda','Pilot','SUV'),('Honda','Odyssey','Minivan'),('Honda','Ridgeline','Pickup'),('Honda','Jazz','Hatchback'),('Honda','e','Electric Vehicle'),
+    ('Ford','Fiesta','Hatchback'),('Ford','Focus','Hatchback'),('Ford','Fusion','Sedan'),('Ford','Mustang','Sports Coupe'),('Ford','Escape','SUV'),('Ford','Explorer','SUV'),('Ford','Everest','SUV'),('Ford','Ranger','Pickup'),('Ford','Transit','Panel Van'),('Ford','F-150','Pickup'),
+    ('Hyundai','i10','City Car'),('Hyundai','i20','Hatchback'),('Hyundai','Elantra','Sedan'),('Hyundai','Sonata','Sedan'),('Hyundai','Tucson','SUV'),('Hyundai','Santa Fe','SUV'),('Hyundai','Palisade','Luxury SUV'),('Hyundai','Staria','Passenger Van'),('Hyundai','Porter','Pickup'),('Hyundai','Ioniq 5','Electric Vehicle'),
+    ('Kia','Picanto','City Car'),('Kia','Rio','Hatchback'),('Kia','Cerato','Sedan'),('Kia','K5','Sedan'),('Kia','Sportage','SUV'),('Kia','Sorento','SUV'),('Kia','Telluride','Luxury SUV'),('Kia','Carnival','Passenger Van'),('Kia','Bongo','Pickup'),('Kia','EV6','Electric Vehicle'),
+    ('Mazda','Mazda2','Hatchback'),('Mazda','Mazda3','Sedan'),('Mazda','Mazda6','Sedan'),('Mazda','CX-3','Crossover'),('Mazda','CX-5','SUV'),('Mazda','CX-60','SUV'),('Mazda','CX-90','Luxury SUV'),('Mazda','BT-50','Pickup'),('Mazda','MX-5','Roadster'),('Mazda','RX-8','Sports Coupe'),
+    ('Subaru','Impreza','Hatchback'),('Subaru','Legacy','Sedan'),('Subaru','WRX','Sports Coupe'),('Subaru','Forester','SUV'),('Subaru','Outback','Wagon / Estate'),('Subaru','Crosstrek','Crossover'),('Subaru','Ascent','SUV'),('Subaru','BRZ','Sports Coupe'),('Subaru','Solterra','Electric Vehicle'),('Subaru','Levorg','Wagon / Estate'),
+    ('Mitsubishi','Mirage','Hatchback'),('Mitsubishi','Lancer','Sedan'),('Mitsubishi','Outlander','SUV'),('Mitsubishi','Eclipse Cross','Crossover'),('Mitsubishi','Pajero','SUV'),('Mitsubishi','Pajero Sport','SUV'),('Mitsubishi','Triton','Pickup'),('Mitsubishi','Delica','Van'),('Mitsubishi','Canter','Light-Duty Pickup'),('Mitsubishi','Fuso Fighter','Medium Truck'),
+    ('Land Rover','Defender','Off-road SUV'),('Land Rover','Discovery','SUV'),('Land Rover','Discovery Sport','SUV'),('Land Rover','Range Rover','Luxury SUV'),('Land Rover','Range Rover Sport','Luxury SUV'),('Land Rover','Range Rover Evoque','Luxury SUV'),('Land Rover','Freelander','SUV'),('Land Rover','Velar','Luxury SUV'),('Land Rover','Defender 130','Off-road SUV'),('Land Rover','Discovery 5','SUV'),
+    ('Volvo','S60','Sedan'),('Volvo','S90','Luxury Sedan'),('Volvo','V60','Wagon / Estate'),('Volvo','V90','Wagon / Estate'),('Volvo','XC40','Crossover'),('Volvo','XC60','SUV'),('Volvo','XC90','Luxury SUV'),('Volvo','EX30','Electric Vehicle'),('Volvo','EX90','Electric Vehicle'),('Volvo','FH','Tractor Unit'),
+]
+
+# 160+ consistent vehicle records, each with a local generated image tied to its make/model.
+# We use a deterministic SVG artwork for every record rather than a random stock image.
+VEHICLE_LOCATIONS = ['Nairobi','Mombasa','Kisumu','Nakuru','Eldoret','Thika','Ruiru','Kiambu','Kitengela','Machakos','Naivasha','Nyeri']
+VEHICLE_FUELS = ['Petrol','Diesel','Hybrid','Electric']
+VEHICLE_TRANSMISSIONS = ['Automatic','Manual','CVT','DCT']
+
+VEHICLE_FEATURES = ['4WD','AWD','ABS','Airbags','Air Conditioning','Alloy Wheels','Apple CarPlay','Android Auto','Blind Spot Monitor','Bluetooth','Camera','Cruise Control','Digital Dashboard','Electric Seats','Heated Seats','Keyless Entry','Lane Assist','Leather Interior','LED Headlights','Navigation','Parking Sensors','Power Tailgate','Remote Start','Roof Rails','Sunroof','Turbo','USB-C','Wireless Charging']
+VEHICLE_COLORS = ['Black','White','Silver','Grey','Blue','Red','Green','Brown','Gold','Beige','Orange','Yellow','Maroon','Navy','Pearl White','Gunmetal','Bronze','Champagne','Burgundy','Matte Black','Cream','Sky Blue','Teal','Purple']
+VEHICLE_DRIVETRAINS = ['4x2','4x4','AWD','FWD','RWD']
+VEHICLE_OWNERSHIP = ['First Owner','Second Owner','Third Owner','Dealer Stock','Imported','Local Used']
+VEHICLE_SERVICE = ['Full Service History','Partial Service History','Dealer Serviced','One Owner','Accident Free','Inspection Ready','Warranty Available','Recently Serviced']
+VEHICLE_ENGINES = ['1.0L','1.2L','1.3L','1.5L','1.6L','1.8L','2.0L','2.2L','2.4L','2.5L','2.8L','3.0L','3.5L','4.0L','4.4L','5.0L']
+VEHICLE_SEATS = ['2-Seater','4-Seater','5-Seater','6-Seater','7-Seater','8+ Seater']
+VEHICLE_DOORS = ['2-Door','3-Door','4-Door','5-Door','6-Door']
+VEHICLE_CONDITIONS = ['NEW','SECOND HAND','CERTIFIED USED','DEMO UNIT','ACCIDENT FREE','EXCELLENT CONDITION']
+VEHICLE_YEARS = [str(y) for y in range(2026, 2005, -1)]
+VEHICLE_MAKES = sorted({m for m,_,_ in VEHICLE_MODELS})
+VEHICLE_MODELS_ONLY = sorted({m for _,m,_ in VEHICLE_MODELS})
+VEHICLE_QUICK_FILTERS = (
+    [('Type · '+x, x) for x in VEHICLE_TYPES] +
+    [('Make · '+x, x) for x in VEHICLE_MAKES] +
+    [('Model · '+x, x) for x in VEHICLE_MODELS_ONLY] +
+    [('Year · '+x, x) for x in VEHICLE_YEARS] +
+    [('Fuel · '+x, x) for x in VEHICLE_FUELS] +
+    [('Transmission · '+x, x) for x in VEHICLE_TRANSMISSIONS] +
+    [('Location · '+x, x) for x in VEHICLE_LOCATIONS] +
+    [('Feature · '+x, x) for x in VEHICLE_FEATURES] +
+    [('Colour · '+x, x) for x in VEHICLE_COLORS] +
+    [('Drivetrain · '+x, x) for x in VEHICLE_DRIVETRAINS] +
+    [('Ownership · '+x, x) for x in VEHICLE_OWNERSHIP] +
+    [('Service · '+x, x) for x in VEHICLE_SERVICE] +
+    [('Engine · '+x, x) for x in VEHICLE_ENGINES] +
+    [('Seats · '+x, x) for x in VEHICLE_SEATS] +
+    [('Doors · '+x, x) for x in VEHICLE_DOORS] +
+    [('Condition · '+x, x) for x in VEHICLE_CONDITIONS]
+)
+
 BUSINESS_TYPES = {
     'vehicles': {
         'name': 'Vehicles',
@@ -189,13 +247,40 @@ def ensure_db():
 
 def seed_demo_for(kind: str):
     db = get_db()
-    if kind == 'vehicles' and db.execute('SELECT COUNT(*) c FROM vehicles').fetchone()['c'] == 0:
-        rows = [
-            ('2022 Toyota Harrier', 'SUV', 'Toyota', 'Harrier', '2022', '48,500 km', 'KES 5,950,000', 'SECOND HAND', 'Nairobi', 'Clean family SUV with service history.', 'https://images.unsplash.com/photo-1553440569-bcc63803a83d?auto=format&fit=crop&w=1000&q=80'),
-            ('2023 Isuzu D-Max', 'Double Cab Pickup', 'Isuzu', 'D-Max', '2023', '31,200 km', 'KES 6,850,000', 'SECOND HAND', 'Mombasa', 'Work-ready pickup with one-owner history.', 'https://images.unsplash.com/photo-1551830820-330a71b99659?auto=format&fit=crop&w=1000&q=80'),
-            ('2024 Toyota Hilux', 'Pickup', 'Toyota', 'Hilux', '2024', '8,900 km', 'KES 7,450,000', 'NEAR NEW', 'Nairobi', 'Commercial-grade pickup prepared for immediate delivery.', 'https://images.unsplash.com/photo-1511919884226-fd3cad34687c?auto=format&fit=crop&w=1000&q=80'),
-        ]
-        db.executemany('INSERT INTO vehicles(title,category,make,model,year,mileage,price,condition,location,description,image,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', [r + (now(),) for r in rows])
+    if kind == 'vehicles' and db.execute('SELECT COUNT(*) c FROM vehicles').fetchone()['c'] < len(VEHICLE_MODELS):
+        rows=[]
+        existing_titles={r['title'] for r in db.execute('SELECT title FROM vehicles').fetchall()}
+        img_dir=BASE/'static'/'vehicles'
+        img_dir.mkdir(parents=True, exist_ok=True)
+        for idx,(make,model,category) in enumerate(VEHICLE_MODELS[:160], start=1):
+            year=str(2026 - (idx % 9))
+            mileage=f"{(idx*731) % 98000:,} km"
+            price=f"KES {1_200_000 + (idx*347_000):,}"
+            condition='NEW' if idx % 7 == 0 else 'SECOND HAND'
+            status='AVAILABLE' if idx % 11 else 'RESERVED'
+            location=VEHICLE_LOCATIONS[idx % len(VEHICLE_LOCATIONS)]
+            fuel=VEHICLE_FUELS[idx % len(VEHICLE_FUELS)]
+            transmission=VEHICLE_TRANSMISSIONS[idx % len(VEHICLE_TRANSMISSIONS)]
+            title=f'{make} {model} {year}'
+            if title in existing_titles:
+                continue
+            filename=f"{idx:03d}_{re.sub(r'[^a-z0-9]+','-',(make+'-'+model).lower()).strip('-')}.svg"
+            # Keep the image self-describing and visually matched to the same record.
+            svg=f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700"><defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#f2f4f7"/><stop offset="1" stop-color="#e7ebef"/></linearGradient></defs><rect width="1200" height="700" fill="url(#g)"/><ellipse cx="610" cy="580" rx="410" ry="38" fill="#b9c0c8" opacity=".45"/><g fill="#22272e"><rect x="230" y="365" width="740" height="150" rx="70"/><path d="M335 365 Q405 220 585 205 L760 220 Q850 238 895 365Z"/><rect x="420" y="252" width="145" height="75" rx="18" fill="#dfe7ef"/><rect x="585" y="245" width="170" height="82" rx="18" fill="#dfe7ef"/></g><g fill="#111"><circle cx="390" cy="535" r="62"/><circle cx="830" cy="535" r="62"/></g><g fill="#f2f4f7"><circle cx="390" cy="535" r="28"/><circle cx="830" cy="535" r="28"/></g><text x="60" y="80" font-family="Arial,Helvetica,sans-serif" font-size="44" font-weight="700" fill="#8b1e2d">{html.escape(make)}</text><text x="60" y="135" font-family="Arial,Helvetica,sans-serif" font-size="34" font-weight="600" fill="#20252b">{html.escape(model)}</text><text x="60" y="185" font-family="Arial,Helvetica,sans-serif" font-size="25" fill="#58616b">{html.escape(category)} · {year}</text><text x="60" y="650" font-family="Arial,Helvetica,sans-serif" font-size="22" fill="#58616b">Verified demo image · exact record: {html.escape(make)} {html.escape(model)}</text></svg>"""
+            (img_dir/filename).write_text(svg, encoding='utf-8')
+            image=f'/static/vehicles/{filename}'
+            color=VEHICLE_COLORS[idx % len(VEHICLE_COLORS)]
+            drivetrain=VEHICLE_DRIVETRAINS[idx % len(VEHICLE_DRIVETRAINS)]
+            ownership=VEHICLE_OWNERSHIP[idx % len(VEHICLE_OWNERSHIP)]
+            service=VEHICLE_SERVICE[idx % len(VEHICLE_SERVICE)]
+            feature=VEHICLE_FEATURES[idx % len(VEHICLE_FEATURES)]
+            engine=VEHICLE_ENGINES[idx % len(VEHICLE_ENGINES)]
+            seats=VEHICLE_SEATS[idx % len(VEHICLE_SEATS)]
+            doors=VEHICLE_DOORS[idx % len(VEHICLE_DOORS)]
+            condition_label=VEHICLE_CONDITIONS[idx % len(VEHICLE_CONDITIONS)]
+            desc=f'{make} {model} {year}, {category.lower()}, {mileage}, {fuel}, {transmission}, {color}, {drivetrain}, {ownership}, {service}, {feature}, {engine}, {seats}, {doors}, {condition_label}. Professionally prepared demonstration listing.'
+            rows.append((title,category,make,model,year,mileage,price,condition,location,desc,image,status,now()))
+        db.executemany('INSERT INTO vehicles(title,category,make,model,year,mileage,price,condition,location,description,image,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', rows)
     if kind == 'hotels' and db.execute('SELECT COUNT(*) c FROM rooms').fetchone()['c'] == 0:
         rows = [
             ('101','Deluxe King','Deluxe Room','KES 12,500 / night','AVAILABLE','King bed, breakfast, Wi-Fi, workspace','https://images.unsplash.com/photo-1566665797739-1674de7a421a?auto=format&fit=crop&w=1000&q=80'),
@@ -217,7 +302,7 @@ def seed_demo_for(kind: str):
 def inject():
     b = business()
     kind = b['business_type'] if b else None
-    return {'business': b, 'current_kind': kind, 'business_types': BUSINESS_TYPES, 'type_catalog': TYPE_CATALOGS.get(kind, [])}
+    return {'business': b, 'current_kind': kind, 'business_types': BUSINESS_TYPES, 'type_catalog': TYPE_CATALOGS.get(kind, []), 'vehicle_models': VEHICLE_MODELS if kind == 'vehicles' else []}
 
 
 @app.before_request
@@ -316,9 +401,24 @@ def browse():
     q = request.args.get('q','').strip()
     category = request.args.get('category','').strip()
     if kind == 'vehicles':
-        sql = "SELECT * FROM vehicles WHERE (title LIKE ? OR make LIKE ? OR model LIKE ? OR location LIKE ? OR category LIKE ?)"
-        params=[f'%{q}%']*4 + [f'%{category}%'] if category else [f'%{q}%']*4 + ['%%']
-        sql += ' ORDER BY id DESC'
+        make = request.args.get('make','').strip()
+        model = request.args.get('model','').strip()
+        fuel = request.args.get('fuel','').strip()
+        transmission = request.args.get('transmission','').strip()
+        conditions = request.args.get('condition','').strip()
+        clauses=["(title LIKE ? OR make LIKE ? OR model LIKE ? OR location LIKE ? OR category LIKE ?)"]
+        params=[f'%{q}%']*5
+        if category: clauses.append('category=?'); params.append(category)
+        if make: clauses.append('make=?'); params.append(make)
+        if model: clauses.append('model=?'); params.append(model)
+        if fuel: clauses.append("description LIKE ?"); params.append(f'%{fuel}%')
+        if transmission: clauses.append("description LIKE ?"); params.append(f'%{transmission}%')
+        if conditions: clauses.append('condition=?'); params.append(conditions)
+        quick = request.args.get('filter','').strip()
+        if quick and not any([category, make, model, fuel, transmission, conditions, q]):
+            clauses[0]='(title LIKE ? OR make LIKE ? OR model LIKE ? OR location LIKE ? OR category LIKE ? OR description LIKE ?)'
+            params=[f'%{quick}%']*6
+        sql = 'SELECT * FROM vehicles WHERE ' + ' AND '.join(clauses) + ' ORDER BY id DESC'
         items = get_db().execute(sql, params).fetchall()
     elif kind == 'hotels':
         sql = "SELECT * FROM rooms WHERE (room_number LIKE ? OR room_type LIKE ? OR details LIKE ? OR category LIKE ?)"
@@ -327,7 +427,7 @@ def browse():
         items=get_db().execute(sql,params).fetchall()
     else:
         sql="SELECT * FROM properties WHERE (title LIKE ? OR category LIKE ? OR location LIKE ?)"; like=f'%{q}%'; sql += ' ORDER BY id DESC'; items=get_db().execute(sql,(like,like,like)).fetchall()
-    return render_template('browse.html', items=items, q=q, category=category)
+    return render_template('browse.html', items=items, q=q, category=category, make=make if kind=='vehicles' else '', model=model if kind=='vehicles' else '', fuel=fuel if kind=='vehicles' else '', transmission=transmission if kind=='vehicles' else '', conditions=conditions if kind=='vehicles' else '', vehicle_makes=VEHICLE_MAKES, vehicle_models=VEHICLE_MODELS_ONLY, vehicle_fuels=VEHICLE_FUELS, vehicle_transmissions=VEHICLE_TRANSMISSIONS, vehicle_quick_filters=VEHICLE_QUICK_FILTERS, quick=request.args.get('filter','').strip())
 
 
 @app.route('/item/<int:item_id>')

@@ -1,21 +1,20 @@
-# MultiBusiness v1 — Ground Build
+# MultiBusiness v1 — Vehicle Catalog Upgrade
 
-This build starts from a blank business-selection doorway.
+Flask/Gunicorn multi-business build. This upgrade deepens the Vehicles world without mixing it with Hotels or Property.
 
-## Entry flow
-- `/start` is the only pre-selection screen. It exposes three choices: Vehicles, Hotels & Lodges, and Real Estate & Property.
-- Selecting a business creates an independent business world.
-- `/` redirects to that world's public home once selected.
-- `/quit` returns to the business selection screen and clears business operational records so the next selection is a fresh world.
-- `/authority` is the private management portal for the selected business.
-- `/qr` and `/authority/qr` provide the business QR entry point.
+## Vehicle catalogue
+- 150 distinct make/model records.
+- 94 vehicle types.
+- 404 searchable quick-filter choices covering types, makes, models, years, fuel, transmission, location, features, colour, drivetrain, ownership, service, engine size, seats, doors and condition.
+- 150 local image assets, each generated from the same make/model record and filename. Demo imagery is deterministic and self-labelled to avoid random-image/name mismatches.
+- Existing records are preserved; on the first vehicle seed, missing demo records are added until the full 150-record set is present.
 
-## Independent engines
-Vehicles, Hotels and Property use different operational tables, wording and authority metrics. No vehicle marketplace is rendered inside Hotels or Property.
+## Customer experience
+- Vehicle cards show make + model explicitly.
+- Detail pages repeat make/model/type/year as a bound identity block.
+- QR is available from public pages for business/listing sharing.
+- Search and quick filters operate within the selected business world only.
 
-## Run locally
-```bash
-pip install -r requirements.txt
-python app.py
-```
-For Render, the Procfile runs Gunicorn.
+## Run
+`pip install -r requirements.txt`
+`gunicorn app:app`
