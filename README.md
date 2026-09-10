@@ -1,63 +1,21 @@
-# MultiBusiness v1 — Independent Business Engine
+# MultiBusiness v1 — Ground Build
 
-Flask mobile-first business platform. The platform starts at `/start` only when no active business is registered. A business operator chooses **one** business type, completes the identity, and that choice becomes the active business world.
+This build starts from a blank business-selection doorway.
 
-## Architecture
+## Entry flow
+- `/start` is the only pre-selection screen. It exposes three choices: Vehicles, Hotels & Lodges, and Real Estate & Property.
+- Selecting a business creates an independent business world.
+- `/` redirects to that world's public home once selected.
+- `/quit` returns to the business selection screen and clears business operational records so the next selection is a fresh world.
+- `/authority` is the private management portal for the selected business.
+- `/qr` and `/authority/qr` provide the business QR entry point.
 
-- `/` = visitor home for the registered business
-- `/start` = fresh business setup / new business world
-- `/authority` = private operating and management portal for the active business
-- QR codes open the current business and can deep-link directly to an item profile
-- There is no cross-business browsing or shared marketplace screen
-- To create another business world, use **Authority → Business settings → Reset business**, then return to `/start`
+## Independent engines
+Vehicles, Hotels and Property use different operational tables, wording and authority metrics. No vehicle marketplace is rendered inside Hotels or Property.
 
-## Complete v1 engines
-
-- Vehicles
-- Hotels & Lodges
-- Restaurants, Bars & Cafés
-- Real Estate & Property
-- Retail & General Marketplace
-
-## Engine-specific operations
-
-### Vehicles
-Vehicle records, photos, specifications, buying requests, finance requests, viewing requests, offers, seller intake and QR identity.
-
-### Hotels
-Room inventory with actual room numbers, availability, guest booking requests, service requests and Authority room management.
-
-### Restaurants
-Menu-style product records, orders, table reservations and Authority table management.
-
-### Property
-Property records, viewing requests, offers and rental requests.
-
-### Retail / Marketplace
-Product records, purchase / reserve actions, enquiries and seller intake.
-
-## Other selectable engines
-
-Marine, Electronics, Furniture, Equipment and Events are selectable but intentionally isolated from the complete engines. They can later be replaced by dedicated products/sites without mixing their data into the active business.
-
-## Technical
-
-- Flask
-- SQLite with WAL mode and busy-timeout / retry protection
-- JSON business export
-- ZIP backup containing JSON and SQLite database
-- Restore interface in Authority
-- QR generation using `qrcode`
-- Responsive CSS with mobile bottom navigation
-- Camera QR entry where the browser supports `BarcodeDetector`
-- Public errors are clean; technical failures are recorded under Authority → System Errors
-
-## Render
-
-Start command:
-
-```text
-gunicorn app:app
+## Run locally
+```bash
+pip install -r requirements.txt
+python app.py
 ```
-
-Required packages are listed in `requirements.txt`.
+For Render, the Procfile runs Gunicorn.
