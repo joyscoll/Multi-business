@@ -8,6 +8,7 @@ import os
 import sqlite3
 import time
 import zipfile
+import urllib.parse
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -252,8 +253,11 @@ def seed_demo_for(kind: str):
     if kind == 'vehicles' and db.execute('SELECT COUNT(*) c FROM vehicles').fetchone()['c'] < len(VEHICLE_MODELS):
         rows=[]
         existing_titles={r['title'] for r in db.execute('SELECT title FROM vehicles').fetchall()}
-        img_dir=BASE/'static'/'vehicles'
-        img_dir.mkdir(parents=True, exist_ok=True)
+        # Use real public web photography links. Never generate a synthetic vehicle image.
+        real_photo_overrides = {
+            'BMW X5': 'https://hips.hearstapps.com/hmg-prod/images/2024-bmw-x5-106-1675791494.jpg',
+            'Mazda CX-5': 'https://di-sitebuilder-assets.dealerinspire.com/Mazda/model-pages/2024/CX-5/Hero.jpg',
+        }
         for idx,(make,model,category) in enumerate(VEHICLE_MODELS[:160], start=1):
             year=str(2026 - (idx % 9))
             mileage=f"{(idx*731) % 98000:,} km"
@@ -266,11 +270,14 @@ def seed_demo_for(kind: str):
             title=f'{make} {model} {year}'
             if title in existing_titles:
                 continue
-            filename=f"{idx:03d}_{re.sub(r'[^a-z0-9]+','-',(make+'-'+model).lower()).strip('-')}.svg"
-            # Keep the image self-describing and visually matched to the same record.
-            svg=f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700"><defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#f2f4f7"/><stop offset="1" stop-color="#e7ebef"/></linearGradient></defs><rect width="1200" height="700" fill="url(#g)"/><ellipse cx="610" cy="580" rx="410" ry="38" fill="#b9c0c8" opacity=".45"/><g fill="#22272e"><rect x="230" y="365" width="740" height="150" rx="70"/><path d="M335 365 Q405 220 585 205 L760 220 Q850 238 895 365Z"/><rect x="420" y="252" width="145" height="75" rx="18" fill="#dfe7ef"/><rect x="585" y="245" width="170" height="82" rx="18" fill="#dfe7ef"/></g><g fill="#111"><circle cx="390" cy="535" r="62"/><circle cx="830" cy="535" r="62"/></g><g fill="#f2f4f7"><circle cx="390" cy="535" r="28"/><circle cx="830" cy="535" r="28"/></g><text x="60" y="80" font-family="Arial,Helvetica,sans-serif" font-size="44" font-weight="700" fill="#8b1e2d">{html.escape(make)}</text><text x="60" y="135" font-family="Arial,Helvetica,sans-serif" font-size="34" font-weight="600" fill="#20252b">{html.escape(model)}</text><text x="60" y="185" font-family="Arial,Helvetica,sans-serif" font-size="25" fill="#58616b">{html.escape(category)} · {year}</text><text x="60" y="650" font-family="Arial,Helvetica,sans-serif" font-size="22" fill="#58616b">Verified demo image · exact record: {html.escape(make)} {html.escape(model)}</text></svg>"""
-            (img_dir/filename).write_text(svg, encoding='utf-8')
-            image=f'/static/vehicles/{filename}'
+            photo_key=f'{make} {model}'
+            # Wikimedia's Special:FilePath resolves directly to a real file when an exact
+            # model photo exists. We never fall back to a different vehicle model.
+            if photo_key in real_photo_overrides:
+                image=real_photo_overrides[photo_key]
+            else:
+                file_name=urllib.parse.quote((make+' '+model+'.jpg').replace(' ','_'), safe='')
+                image=f'https://commons.wikimedia.org/wiki/Special:FilePath/{file_name}?width=1400'
             color=VEHICLE_COLORS[idx % len(VEHICLE_COLORS)]
             drivetrain=VEHICLE_DRIVETRAINS[idx % len(VEHICLE_DRIVETRAINS)]
             ownership=VEHICLE_OWNERSHIP[idx % len(VEHICLE_OWNERSHIP)]
