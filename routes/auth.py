@@ -24,7 +24,7 @@ def _login(target):
                 login_user(user, remember=False, fresh=True)
                 user.last_login_at = datetime.now(timezone.utc)
                 db.session.commit()
-                return redirect(request.args.get("next") or ("/fr%2" if target == "admin" else "/212324"))
+                return redirect(request.args.get("next") or ("/admin" if target == "admin" else "/mypp/on"))
         else:
             flash("Invalid username or password.", "error")
     return render_template("auth/login.html", target=target, pwa_manifest="/mypp/manifest.webmanifest" if target == "pos" else None)

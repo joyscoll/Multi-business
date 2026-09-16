@@ -40,6 +40,16 @@ def create_app():
     def load_user(user_id):
         return db.session.get(User, user_id)
 
+    @login_manager.unauthorized_handler
+    def unauthorized():
+        # The application has two authenticated portals. Route anonymous
+        # visitors to the correct login screen instead of relying on a
+        # single Flask-Login endpoint that does not exist.
+        target = request.args.get("next", "")
+        if request.path.startswith("/admin") or request.path.startswith("/fr"):
+            return redirect(f"/admin/login?next={request.path}")
+        return redirect(f"/mypp?next={request.path}")
+
     @app.context_processor
     def inject_globals():
         business = Business.query.first()
@@ -50,6 +60,7 @@ def create_app():
     def healthz():
         return {"status": "ok", "service": "real-mart", "time": datetime.now(timezone.utc).isoformat()}
 
+    @csrf.exempt
     @app.post("/pulse_receiver")
     def pulse_receiver():
         # Quiet compatibility endpoint for an external health pulse. It never

@@ -55,15 +55,14 @@ def admin_root():
 
 
 @bp.get("/fr%2")
-@admin_required("reports.view")
 def dashboard_obscured():
-    return admin_home()
+    # Legacy/obscured admin bookmark retained as a safe compatibility URL.
+    return redirect("/admin")
 
 
 @bp.get("/fr%252")
-@admin_required("reports.view")
 def dashboard_obscured_encoded():
-    return admin_home()
+    return redirect("/admin")
 
 
 
