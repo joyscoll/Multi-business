@@ -74,3 +74,16 @@ real-mart/
 ## Route philosophy
 
 The public root is the customer-facing `.com` experience. `/supermarket` is the install/discovery layer for multiple marts. `/otcOmc` is intentionally non-obvious and reserved for authenticated cashier operations. `/fr%2` is the master control centre and is not linked from the public navigation.
+
+## Deployment URL model
+
+The customer storefront is always the service root `/`. The hostname can be a Render URL such as `https://choices-6ej4.onrender.com/` today and a custom `.com` later; no code should hard-code `.com`.
+
+The application uses relative paths:
+
+- `/` — customer shopping/storefront
+- `/supermarket` — multi-mart discovery and mobile install page
+- `/otcOmc` — protected cashier till/PWA
+- `/fr%2` — protected master administration
+
+For production, attach a persistent Render Postgres database through `DATABASE_URL`. SQLite is only a fallback for local development; it is not a persistent production store on Render.

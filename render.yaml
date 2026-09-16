@@ -16,6 +16,8 @@ services:
           property: connectionString
       - key: FLASK_ENV
         value: production
+      - key: AUTO_INIT_DB
+        value: "1"
       - key: DARAJA_ENV
         value: sandbox
       - key: CURRENCY

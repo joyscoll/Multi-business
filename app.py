@@ -27,6 +27,14 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp)
 
+    # Render services sometimes start with `gunicorn app:app` and skip
+    # the explicit init_db.py command. Ensure a fresh database cannot
+    # crash the public storefront with "no such table" errors.
+    if os.getenv("AUTO_INIT_DB", "1") != "0":
+        from bootstrap import bootstrap_database
+        with app.app_context():
+            bootstrap_database()
+
     @login_manager.user_loader
     def load_user(user_id):
         return db.session.get(User, user_id)
