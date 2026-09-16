@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#ffffff">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f57c00">
 <meta name="description" content="{{business_name}} online supermarket">
 {% if pwa_manifest %}<link rel="manifest" href="{{pwa_manifest}}">{% elif not request.path.startswith("/control") %}<link rel="manifest" href="/shop/manifest.webmanifest">{% endif %}
 <link rel="stylesheet" href="{{url_for('static',filename='css/app.css')}}"><title>{{business_name}}{% if title %} · {{title}}{% endif %}</title></head>

@@ -75,6 +75,9 @@ def create_app():
 
     @app.errorhandler(Exception)
     def handle_unexpected_error(exc):
+        from werkzeug.exceptions import HTTPException
+        if isinstance(exc, HTTPException):
+            return exc
         # Never leak SQL/POS/provider details to public browsers. Record enough
         # evidence for the protected admin System Errors screen instead.
         try:

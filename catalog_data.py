@@ -193,13 +193,115 @@ CATALOG = {
     ],
 }
 
+
+# V10 supermarket department naming: broad departments, not kiosk-style micro-categories.
+_CATEGORY_RENAMES = {
+    "Bread & Bakery": "Bakery & Bread",
+    "Milk & Dairy": "Dairy, Eggs & Chilled",
+    "Flour, Rice & Grains": "Rice, Flour, Pasta & Grains",
+    "Cooking Oil & Sauces": "Cooking Oils, Sauces & Spices",
+    "Canned & Packaged Foods": "Food Cupboard",
+    "Snacks & Biscuits": "Snacks, Biscuits & Confectionery",
+    "Beverages": "Drinks & Water",
+    "Baby Care": "Baby & Kids",
+    "Personal Care": "Beauty & Personal Care",
+    "Laundry & Cleaning": "Laundry & Home Care",
+    "Household": "Household & Kitchen",
+    "Meat & Poultry": "Meat, Poultry & Fish",
+    "Frozen Foods": "Frozen Foods & Ice Cream",
+    "Pet Supplies": "Pet Care",
+}
+CATALOG = {_CATEGORY_RENAMES.get(k, k): v for k, v in CATALOG.items()}
+
+CATALOG["Bakery & Bread"].extend([
+    ("Tupike Fresh White Bread 600g", "Tupike", "loaf"),
+    ("Naivas Fresh White Bread 800g", "Naivas", "loaf"),
+])
+
+CATALOG["Dairy, Eggs & Chilled"].extend([
+    ("Fresh Eggs Tray 30 Pack", "Various", "tray"),
+    ("Fresh Eggs 15 Pack", "Various", "tray"),
+    ("Brookside Long Life Milk 500ml", "Brookside", "pack"),
+    ("Brookside Long Life Milk 1L", "Brookside", "pack"),
+    ("Daima UHT Fino Bora 500ml", "Daima", "pack"),
+    ("Daima UHT Fino Bora 1L", "Daima", "pack"),
+    ("Delamere Strawberry Yoghurt 500ml", "Delamere", "pack"),
+    ("Brookside Natural Yoghurt 500ml", "Brookside", "tub"),
+    ("Brookside Vanilla Yoghurt 500ml", "Brookside", "tub"),
+    ("Brookside Fruitness Mixed Berries Yoghurt 450ml", "Brookside", "tub"),
+    ("Fresh Cream 250ml", "Various", "pack"),
+])
+CATALOG["Meat, Poultry & Fish"].extend([
+    ("Kenchic Chicken Wings 650g 12 Pack", "Kenchic", "pack"),
+    ("Kenchic Chicken Breast 500g", "Kenchic", "pack"),
+    ("Tilapia Whole 1kg", "Fresh Fish", "kg"),
+    ("Omena 500g", "Fresh Fish", "pack"),
+    ("Beef Sausages 1kg", "Farmers Choice", "pack"),
+    ("Smokies 1kg", "Farmers Choice", "pack"),
+    ("Bacon 250g", "Farmers Choice", "pack"),
+])
+CATALOG["Fresh Produce"].extend([
+    ("Cooking Bananas 1kg", "Fresh Produce", "kg"),
+    ("Limes 500g", "Fresh Produce", "pack"),
+    ("Broccoli 500g", "Fresh Produce", "pack"),
+    ("Cauliflower 1pc", "Fresh Produce", "piece"),
+    ("Green Beans 500g", "Fresh Produce", "pack"),
+    ("Beetroot 500g", "Fresh Produce", "pack"),
+])
+CATALOG["Household & Kitchen"].extend([
+    ("Food Storage Containers 5pc", "Various", "set"),
+    ("Stainless Steel Cooking Pot 3L", "Various", "piece"),
+    ("Frying Pan 28cm", "Various", "piece"),
+    ("Kitchen Knife", "Various", "piece"),
+    ("Plastic Storage Basket", "Various", "piece"),
+])
+CATALOG["Beauty & Personal Care"].extend([
+    ("Listerine Mouthwash 500ml", "Listerine", "bottle"),
+    ("Oral-B Toothbrush Medium", "Oral-B", "piece"),
+    ("Nivea Men Creme 150ml", "Nivea", "tin"),
+    ("Dove Body Wash 500ml", "Dove", "bottle"),
+    ("Ariel Fabric Softener 1L", "Ariel", "bottle"),
+])
+CATALOG["Snacks, Biscuits & Confectionery"].extend([
+    ("Chupa Chups Lollipop 10 Pack", "Chupa Chups", "pack"),
+    ("Cadbury Dairy Milk 45g", "Cadbury", "bar"),
+    ("Pringles Original 165g", "Pringles", "can"),
+    ("Tropical Heat Potato Crisps 100g", "Tropical Heat", "pack"),
+])
+
+# Additional broad supermarket departments commonly carried beyond groceries.
+CATALOG["Health & Wellness"] = [
+    ("Panadol Extra 16 Tablets", "Panadol", "pack"),
+    ("Dettol Antiseptic 500ml", "Dettol", "bottle"),
+    ("Johnson's Cotton Buds 100s", "Johnson's", "pack"),
+    ("Thermometer Digital", "Various", "piece"),
+    ("Plasters Assorted 20s", "Various", "pack"),
+]
+CATALOG["Stationery & General Merchandise"] = [
+    ("A4 Exercise Books 200 Pages", "Various", "pack"),
+    ("Ball Pens Blue 10 Pack", "Various", "pack"),
+    ("HB Pencils 12 Pack", "Various", "pack"),
+    ("Permanent Marker Black", "Various", "piece"),
+    ("A4 Printing Paper 500 Sheets", "PaperOne", "ream"),
+]
+CATALOG["Electronics & Small Appliances"] = [
+    ("LED Bulb 9W", "Various", "piece"),
+    ("LED Bulb 12W", "Various", "piece"),
+    ("Extension Cable 4 Way", "Various", "piece"),
+    ("Phone Charging Cable USB-C", "Various", "piece"),
+    ("Electric Kettle 1.7L", "Various", "piece"),
+]
+
+
 # Approximate starter price bands (KES) to make the catalogue usable immediately.
 # Admin can edit prices; these are not represented as live market quotes.
 PRICE_BANDS = {
-    "Bread & Bakery": (55, 180), "Milk & Dairy": (45, 420), "Breakfast & Cereals": (180, 1200),
-    "Flour, Rice & Grains": (100, 900), "Sugar, Tea & Coffee": (120, 1300), "Cooking Oil & Sauces": (90, 950),
-    "Canned & Packaged Foods": (80, 700), "Snacks & Biscuits": (40, 500), "Beverages": (40, 450),
-    "Baby Care": (120, 2500), "Personal Care": (80, 1200), "Laundry & Cleaning": (70, 1200),
-    "Household": (50, 1800), "Fresh Produce": (40, 500), "Meat & Poultry": (250, 1200),
-    "Frozen Foods": (250, 1200), "Pet Supplies": (150, 1500),
+    "Bakery & Bread": (55, 260), "Dairy, Eggs & Chilled": (45, 650), "Breakfast & Cereals": (180, 1200),
+    "Rice, Flour, Pasta & Grains": (100, 1500), "Sugar, Tea & Coffee": (120, 1300), "Cooking Oils, Sauces & Spices": (60, 2200),
+    "Food Cupboard": (60, 1500), "Snacks, Biscuits & Confectionery": (30, 850), "Drinks & Water": (30, 1500),
+    "Baby & Kids": (80, 3500), "Beauty & Personal Care": (50, 2500), "Laundry & Home Care": (40, 2500),
+    "Household & Kitchen": (30, 4500), "Fresh Produce": (40, 500), "Meat, Poultry & Fish": (120, 2500),
+    "Frozen Foods & Ice Cream": (120, 2500), "Pet Care": (100, 3000),
+    "Fresh Produce": (30, 900), "Health & Wellness": (50, 1800),
+    "Stationery & General Merchandise": (30, 3000), "Electronics & Small Appliances": (80, 12000),
 }

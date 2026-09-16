@@ -119,7 +119,7 @@ def shop_manifest():
         "scope": f"{base}/",
         "display": "standalone",
         "background_color": "#f7fafb",
-        "theme_color": "#193849",
+        "theme_color": "#f57c00",
         "description": "Denmart online supermarket",
         "icons": [{"src": f"{base}/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
     })
@@ -127,7 +127,7 @@ def shop_manifest():
 
 @bp.get("/shop/sw.js")
 def shop_service_worker():
-    js = """const CACHE='real-mart-public-v8';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET')return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Denmart is temporarily offline',{status:503}))));});\n"""
+    js = """const CACHE='denmart-public-v11';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET')return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Denmart is temporarily offline',{status:503}))));});\n"""
     return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/"})
 
 

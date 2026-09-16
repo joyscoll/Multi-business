@@ -39,6 +39,12 @@ def image_for(name: str, category: str, brand: str) -> str:
         "Tropical Heat Chilli Lemon Crisps 100g": "https://cdn.mafrservices.com/pim-content/KEN/media/product/32275/1742392804/32275_main.jpg",
         "Del Monte Mango Juice 1L": "https://cdn.mafrservices.com/pim-content/KEN/media/product/38611/1742392804/38611_main.jpg",
         "Colgate Maximum Cavity Protection 100ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/222023/1742392804/222023_main.jpg",
+        "Tupike Maize Meal 2Kg": "https://d16zmt6hgq1jhj.cloudfront.net/product/3888/yiuDik14bzJMMSXVqTO9olE0xFTl5X23UZ3rzSU2.jpg",
+        "Golden Fry Cooking Oil 2L": "https://cdnprod.mafretailproxy.com/sys-master-root/h38/h04/12462424457246/34101_Main.jpg_480Wx480H",
+        "Omo Detergent 1kg": "https://cdn.mafrservices.com/sys-master-root/h05/h10/62003535642654/14163_main.jpg?im=Resize%3D480",
+        "Kericho Gold Tea Bags 100s": "https://owinosupermarket.com/cdn/shop/files/rn-image_picker_lib_temp_d2b467a9-75d4-433d-99b6-2b86d6b6807f.jpg?v=1779035646&width=720",
+        "Brookside Strawberry Yogurt 500ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/44080/1742392804/44080_main.jpg",
+        "Delamere Strawberry Yoghurt 500ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/44079/1742392804/44079_main.jpg",
     }
     return exact.get(name, "")
 
@@ -106,7 +112,7 @@ def seed_defaults():
 
     catalog_version = SystemSetting.query.filter_by(business_id=business.id, key="catalog_seed_version").first()
     first_catalog_boot = catalog_version is None
-    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "denmart-2026-09-16-v9")
+    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "denmart-2026-09-16-v11")
     if refresh_catalog_assets:
         for legacy in StoreProduct.query.filter_by(store_id=store.id).all():
             legacy.is_available = False
@@ -115,7 +121,7 @@ def seed_defaults():
         catalog_version = SystemSetting(
             business_id=business.id,
             key="catalog_seed_version",
-            value="denmart-2026-09-16-v9",
+            value="denmart-2026-09-16-v11",
         )
         db.session.add(catalog_version)
 
@@ -131,6 +137,11 @@ def seed_defaults():
             db.session.add(category)
             db.session.flush()
         category_map[category_name] = category
+
+    active_names = set(CATALOG.keys())
+    for legacy_category in Category.query.filter_by(business_id=business.id).all():
+        if legacy_category.name not in active_names:
+            legacy_category.is_active = False
 
     rule = PricingRule.query.filter_by(business_id=business.id, name="Default 20% Cost Plus").first()
     if not rule:
