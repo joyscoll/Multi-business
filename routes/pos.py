@@ -1,5 +1,4 @@
 from decimal import Decimal, InvalidOperation
-import secrets
 from flask import Blueprint, jsonify, render_template, request, redirect
 from flask_login import current_user, login_required
 from extensions import csrf, db
@@ -53,7 +52,7 @@ def pos_manifest():
 @bp.get("/merchant/sw.js")
 def pos_service_worker():
     from flask import Response
-    js="""const CACHE='denmart-agent-v14';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/merchant'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Till connection unavailable',{status:503}))))});\n"""
+    js="""const CACHE='real-mart-agent-v1';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/merchant'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Till connection unavailable',{status:503}))))});\n"""
     return Response(js,mimetype="application/javascript",headers={"Service-Worker-Allowed":"/merchant"})
 
 
@@ -70,96 +69,36 @@ def receipt(receipt_number):
 @bp.post("/api/pos/sales")
 @cashier_required
 def create_sale():
-    data = request.get_json(silent=True) or {}
-    return _record_sale(data, allow_offline=False)
-
-
-def _record_sale(data, allow_offline=False):
-    payment_method = (data.get("payment_method") or "CASH").upper()
-    items = data.get("items") or []
-    client_ref = (data.get("client_ref") or "").strip()[:80]
-    shift = Shift.query.filter_by(store_id=current_user.store_id, cashier_id=current_user.id, status="OPEN").first()
-    if not shift:
-        return jsonify(error="shift_not_open"), 409
-    if not items:
-        return jsonify(error="cart_empty"), 400
-    if payment_method not in {"CASH", "CARD", "MPESA"}:
-        return jsonify(error="unsupported_payment_method"), 400
-    if allow_offline and payment_method == "MPESA":
-        return jsonify(error="mpesa_requires_connection"), 400
-
-    if client_ref:
-        existing = Sale.query.filter_by(receipt_number=client_ref).first()
-        if existing:
-            return jsonify(ok=True, sale_id=existing.id, receipt_number=existing.receipt_number,
-                           payment_status=existing.payment_status, total=str(existing.total), duplicate=True)
-
-    subtotal = Decimal("0")
-    prepared = []
+    data=request.get_json(silent=True) or {}; payment_method=(data.get("payment_method") or "CASH").upper(); items=data.get("items") or []
+    shift=Shift.query.filter_by(store_id=current_user.store_id,cashier_id=current_user.id,status="OPEN").first()
+    if not shift:return jsonify(error="shift_not_open"),409
+    if not items:return jsonify(error="cart_empty"),400
+    subtotal=Decimal("0");prepared=[]
     for raw in items:
-        sp = (StoreProduct.query.filter_by(id=raw.get("store_product_id"), store_id=current_user.store_id)
-              .with_for_update().first())
-        try:
-            qty = Decimal(str(raw.get("quantity", 0)))
-        except InvalidOperation:
-            return jsonify(error="invalid_quantity"), 400
-        if not sp or not sp.available_pos or not sp.is_available or qty <= 0:
-            return jsonify(error="invalid_item"), 400
-        available = Decimal(sp.stock_quantity or 0) - Decimal(sp.reserved_quantity or 0)
-        if available < qty:
-            return jsonify(error="insufficient_stock", product=sp.product.name, available=str(available)), 409
-        line = Decimal(sp.selling_price) * qty
-        subtotal += line
-        prepared.append((sp, qty, line))
-
-    receipt_number = client_ref or f"DM-{now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3).upper()}"
+        sp=db.session.get(StoreProduct,raw.get("store_product_id"))
+        try:qty=Decimal(str(raw.get("quantity",0)))
+        except InvalidOperation:return jsonify(error="invalid_quantity"),400
+        if not sp or sp.store_id!=current_user.store_id or not sp.available_pos or not sp.is_available or qty<=0:return jsonify(error="invalid_item"),400
+        available=Decimal(sp.stock_quantity or 0)-Decimal(sp.reserved_quantity or 0)
+        if available<qty:return jsonify(error="insufficient_stock",product=sp.product.name,available=str(available)),409
+        line=Decimal(sp.selling_price)*qty;subtotal+=line;prepared.append((sp,qty,line))
+    if payment_method not in {"CASH", "CARD", "MPESA"}: return jsonify(error="unsupported_payment_method"),400
+    receipt_number=f"RM-{now().strftime('%Y%m%d-%H%M%S')}-{Sale.query.count()+1:06d}"
     paid_now = payment_method in {"CASH", "CARD"}
-    sale = Sale(
-        business_id=current_user.business_id,
-        store_id=current_user.store_id,
-        cashier_id=current_user.id,
-        receipt_number=receipt_number,
-        subtotal=subtotal,
-        total=subtotal,
-        status="COMPLETED" if paid_now else "PENDING",
-        payment_status="PAID" if paid_now else "PENDING",
-        completed_at=now() if paid_now else None,
-    )
-    db.session.add(sale)
-    db.session.flush()
-    for sp, qty, line in prepared:
-        db.session.add(SaleItem(
-            sale_id=sale.id, product_id=sp.product_id, product_name_snapshot=sp.product.name,
-            barcode_snapshot=sp.product.barcode, unit_price=sp.selling_price,
-            quantity=qty, line_total=line,
-        ))
-        if payment_method == "MPESA" and not paid_now:
-            sp.reserved_quantity = Decimal(sp.reserved_quantity or 0) + qty
-
+    sale=Sale(business_id=current_user.business_id,store_id=current_user.store_id,cashier_id=current_user.id,receipt_number=receipt_number,subtotal=subtotal,total=subtotal,status="COMPLETED" if paid_now else "PENDING",payment_status="PAID" if paid_now else "PENDING",completed_at=now() if paid_now else None)
+    db.session.add(sale);db.session.flush()
+    for sp,qty,line in prepared:
+        db.session.add(SaleItem(sale_id=sale.id,product_id=sp.product_id,product_name_snapshot=sp.product.name,barcode_snapshot=sp.product.barcode,unit_price=sp.selling_price,quantity=qty,line_total=line))
     if paid_now:
-        for sp, qty, _ in prepared:
-            sp.stock_quantity = Decimal(sp.stock_quantity or 0) - qty
-            db.session.add(InventoryTransaction(
-                store_id=sp.store_id, product_id=sp.product_id, transaction_type="SALE", quantity=-qty,
-                unit_cost=sp.cost_price, reference_type="SALE", reference_id=sale.id, created_by=current_user.id,
-            ))
-        if payment_method == "CASH":
-            db.session.add(CashDrawerTransaction(
-                shift_id=shift.id, transaction_type="SALE_CASH", amount=subtotal,
-                reference_type="SALE", reference_id=sale.id, created_by=current_user.id,
-            ))
+        for sp,qty,_ in prepared:
+            sp.stock_quantity=Decimal(sp.stock_quantity)-qty
+            db.session.add(InventoryTransaction(store_id=sp.store_id,product_id=sp.product_id,transaction_type="SALE",quantity=-qty,unit_cost=sp.cost_price,reference_type="SALE",reference_id=sale.id,created_by=current_user.id))
+        if payment_method=="CASH":
+            db.session.add(CashDrawerTransaction(shift_id=shift.id,transaction_type="SALE_CASH",amount=subtotal,reference_type="SALE",reference_id=sale.id,created_by=current_user.id))
         else:
-            db.session.add(Payment(
-                business_id=current_user.business_id, store_id=current_user.store_id, sale_id=sale.id,
-                provider="MANUAL", method=payment_method, amount=subtotal, currency="KES", status="PAID",
-                external_reference=(data.get("payment_reference") or "")[:160], completed_at=now(),
-            ))
-
-    db.session.commit()
-    audit("SALE_CREATED", "Sale", sale.id,
-          new_values={"total": str(sale.total), "payment_method": payment_method, "offline": allow_offline})
-    return jsonify(ok=True, sale_id=sale.id, receipt_number=receipt_number,
-                   payment_status=sale.payment_status, total=str(sale.total))
+            db.session.add(Payment(business_id=current_user.business_id,store_id=current_user.store_id,sale_id=sale.id,provider="MANUAL",method=payment_method,amount=subtotal,currency="KES",status="PAID",external_reference=(data.get("payment_reference") or "")[:160],completed_at=now()))
+    db.session.commit();audit("SALE_CREATED","Sale",sale.id,new_values={"total":str(sale.total),"payment_method":payment_method})
+    return jsonify(ok=True,sale_id=sale.id,receipt_number=receipt_number,payment_status=sale.payment_status,total=str(sale.total))
 
 
 @csrf.exempt
@@ -220,34 +159,3 @@ def cash_drawer():
     txn=CashDrawerTransaction(shift_id=shift.id,transaction_type=kind,amount=amount,notes=(data.get("notes") or "")[:240],created_by=current_user.id)
     db.session.add(txn);db.session.commit();audit("CASH_DRAWER_ACTIVITY","Shift",shift.id,new_values={"type":kind,"amount":str(amount)})
     return jsonify(ok=True)
-
-
-@csrf.exempt
-@bp.post("/api/pos/sync/offline")
-@cashier_required
-def sync_offline():
-    data = request.get_json(silent=True) or {}
-    queue = data.get("sales") or []
-    if not isinstance(queue, list):
-        return jsonify(error="invalid_queue"), 400
-    if len(queue) > 50:
-        return jsonify(error="queue_too_large"), 413
-    results = []
-    for sale_data in queue:
-        if not isinstance(sale_data, dict):
-            results.append({"ok": False, "error": "invalid_sale"})
-            continue
-        method = (sale_data.get("payment_method") or "CASH").upper()
-        if method == "MPESA":
-            results.append({"ok": False, "client_ref": sale_data.get("client_ref"), "error": "mpesa_requires_connection"})
-            continue
-        try:
-            response, status_code = _record_sale({**sale_data, "payment_method": method}, allow_offline=True)
-            payload = response.get_json() if hasattr(response, "get_json") else None
-            results.append({"ok": status_code < 400, "client_ref": sale_data.get("client_ref"), **(payload or {})})
-            if status_code >= 400:
-                db.session.rollback()
-        except Exception as exc:
-            db.session.rollback()
-            results.append({"ok": False, "client_ref": sale_data.get("client_ref"), "error": "sync_failed"})
-    return jsonify(ok=all(x.get("ok") for x in results) if results else True, results=results)

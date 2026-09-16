@@ -59,7 +59,7 @@ def create_app():
 
     @app.get("/healthz")
     def healthz():
-        return {"status": "ok", "service": "denmart", "time": datetime.now(timezone.utc).isoformat()}
+        return {"status": "ok", "service": "real-mart", "time": datetime.now(timezone.utc).isoformat()}
 
     # External pulse endpoint is deliberately isolated from CSRF.
     pulse_bp = Blueprint("pulse", __name__)

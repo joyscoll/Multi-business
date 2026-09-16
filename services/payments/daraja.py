@@ -27,26 +27,8 @@ class DarajaProvider(PaymentProvider):
                               headers={"Authorization": f"Bearer {token}"}, timeout=30)
         r.raise_for_status(); return r.json()
 
-    def check_payment(self, *, checkout_request_id):
-        if not checkout_request_id:
-            raise ValueError("checkout_request_id is required")
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        password = base64.b64encode(f"{self.shortcode}{self.passkey}{timestamp}".encode()).decode()
-        token = self.access_token()
-        payload = {
-            "BusinessShortCode": self.shortcode,
-            "Password": password,
-            "Timestamp": timestamp,
-            "CheckoutRequestID": checkout_request_id,
-        }
-        r = self.session.post(
-            f"{self.base}/mpesa/stkpushquery/v1/query",
-            json=payload,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
+    def check_payment(self, **kwargs):
+        raise NotImplementedError("STK query/reconciliation should be enabled before live use.")
 
     def handle_callback(self, payload):
         body = ((payload or {}).get("Body") or {}).get("stkCallback") or {}
