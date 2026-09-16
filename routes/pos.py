@@ -20,6 +20,14 @@ def cashier_required(fn):
 
 
 @bp.get("/otcOmc")
+def dashboard_entry():
+    if not current_user.is_authenticated:
+        return __import__('flask').redirect("/otcOmc/login?next=/otcOmc")
+    if not current_user.has_permission("sales.create"):
+        return "Forbidden", 403
+    return dashboard()
+
+
 @cashier_required
 def dashboard():
     store = db.session.get(Store, current_user.store_id) if current_user.store_id else None
@@ -41,11 +49,22 @@ def pos_manifest():
         "icons": [{"src": base + "/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
     })
 
-@bp.get("/pos")
-@cashier_required
-def legacy_dashboard():
-    return dashboard()
+@bp.get("/otcOmc/sw.js")
+def pos_service_worker():
+    from flask import Response
+    js = """const CACHE='real-mart-pos-v1';
+self.addEventListener('install',e=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch',e=>{
+  const u=new URL(e.request.url);
+  if(u.origin!==location.origin)return;
+  if(e.request.method!=='GET')return;
+  if(!u.pathname.startsWith('/otcOmc'))return;
+  e.respondWith(fetch(e.request).catch(()=>new Response('POS terminal offline',{status:503,headers:{'Content-Type':'text/plain'}})));
+});
 
+"""
+    return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/otcOmc"})
 
 @bp.get("/otcOmc/receipt/<receipt_number>")
 @cashier_required
@@ -55,12 +74,6 @@ def receipt(receipt_number):
         return "Forbidden", 403
     items = SaleItem.query.filter_by(sale_id=sale.id).all()
     return render_template("pos/receipt.html", sale=sale, items=items)
-
-
-@bp.get("/pos/receipt/<receipt_number>")
-@cashier_required
-def legacy_receipt(receipt_number):
-    return receipt(receipt_number)
 
 
 @csrf.exempt

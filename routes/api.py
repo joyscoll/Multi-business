@@ -20,7 +20,7 @@ def product_search():
         query = query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.sku.ilike(like)) | (Product.brand.ilike(like)) | (Product.search_keywords.ilike(like)))
     rows = query.order_by(Product.name).limit(30).all()
     return jsonify(items=[{"id": r.id, "product_id": r.product_id, "name": r.product.name, "barcode": r.product.barcode,
-                           "price": str(r.selling_price), "stock": str(r.stock_quantity), "image_url": r.product.image_url} for r in rows])
+                           "price": str(r.selling_price), "image_url": r.product.image_url} for r in rows])
 
 @bp.get("/products/barcode/<barcode>")
 def barcode(barcode):
@@ -28,6 +28,45 @@ def barcode(barcode):
     query = StoreProduct.query.join(Product).filter(Product.barcode == barcode, StoreProduct.is_available.is_(True))
     if store_id: query = query.filter(StoreProduct.store_id == store_id)
     row = query.first()
+    if not row: return jsonify(error="product_not_found"), 404
+    return jsonify(id=row.id, product_id=row.product_id, name=row.product.name, barcode=row.product.barcode, price=str(row.selling_price))
+
+
+def cashier_api(fn):
+    from functools import wraps
+    @wraps(fn)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if not current_user.has_permission("sales.create"):
+            return jsonify(error="forbidden"), 403
+        return fn(*args, **kwargs)
+    return wrapped
+
+
+@bp.get("/pos/products/search")
+@cashier_api
+def pos_product_search():
+    q = request.args.get("q", "").strip()
+    query = StoreProduct.query.join(Product).filter(
+        StoreProduct.is_available.is_(True),
+        StoreProduct.store_id == current_user.store_id,
+        StoreProduct.available_pos.is_(True),
+    )
+    if q:
+        like = f"%{q}%"
+        query = query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.sku.ilike(like)) | (Product.brand.ilike(like)) | (Product.search_keywords.ilike(like)))
+    rows = query.order_by(Product.name).limit(30).all()
+    return jsonify(items=[{"id": r.id, "product_id": r.product_id, "name": r.product.name, "barcode": r.product.barcode,
+                           "price": str(r.selling_price), "stock": str(r.stock_quantity), "image_url": r.product.image_url} for r in rows])
+
+
+@bp.get("/pos/products/barcode/<barcode>")
+@cashier_api
+def pos_barcode(barcode):
+    row = StoreProduct.query.join(Product).filter(
+        Product.barcode == barcode, StoreProduct.is_available.is_(True),
+        StoreProduct.store_id == current_user.store_id, StoreProduct.available_pos.is_(True)
+    ).first()
     if not row: return jsonify(error="product_not_found"), 404
     return jsonify(id=row.id, product_id=row.product_id, name=row.product.name, barcode=row.product.barcode, price=str(row.selling_price), stock=str(row.stock_quantity))
 
@@ -97,10 +136,16 @@ def mpesa_initiate():
     order_id = data.get("order_id")
     if amount <= 0 or not phone: return jsonify(error="amount_and_phone_required"), 400
     if not sale_id and not order_id: return jsonify(error="sale_or_order_required"), 400
+    if sale_id and (not current_user.is_authenticated or not current_user.has_permission("sales.create")):
+        return jsonify(error="forbidden"), 403
     entity = db.session.get(Sale, sale_id) if sale_id else db.session.get(Order, order_id)
     if not entity: return jsonify(error="entity_not_found"), 404
-    if current_user.is_authenticated and entity.store_id != current_user.store_id:
+    if sale_id and entity.store_id != current_user.store_id:
         return jsonify(error="entity_not_found"), 404
+    if Decimal(str(entity.total)) != amount:
+        return jsonify(error="amount_mismatch"), 400
+    if order_id and entity.payment_status == "PAID":
+        return jsonify(error="already_paid"), 409
     business_id = entity.business_id
     store_id = entity.store_id
     payment = Payment(business_id=business_id, store_id=store_id, sale_id=sale_id, order_id=order_id,

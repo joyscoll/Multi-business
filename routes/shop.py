@@ -94,7 +94,7 @@ def order_confirmation(order_number):
 @bp.get("/app-qr.png")
 def app_qr():
     import qrcode
-    img = qrcode.make(request.host_url.rstrip("/") + "/supermarket")
+    img = qrcode.make(request.url_root)
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -104,28 +104,43 @@ def app_qr():
 @bp.get("/supermarket")
 def supermarket():
     stores = active_stores()
-    return render_template("shop/supermarket.html", stores=stores, selected=selected_store())
+    return render_template("shop/supermarket.html", stores=stores, selected=selected_store(), pwa_manifest="/supermarket/manifest.webmanifest")
 
 
 @bp.get("/supermarket/<code>")
 def supermarket_store(code):
     store = Store.query.filter_by(code=code, is_active=True).first_or_404()
     session["store_code"] = store.code
-    return redirect(url_for("shop.supermarket", store=store.code))
+    return redirect(url_for("shop.shop", store=store.code))
 
 
-@bp.get("/supermarket/manifest/<code>.webmanifest")
-def mart_manifest(code):
-    store = Store.query.filter_by(code=code, is_active=True).first_or_404()
+@bp.get("/supermarket/manifest.webmanifest")
+def supermarket_manifest():
     base = request.host_url.rstrip("/")
     return jsonify({
-        "name": f"{store.name} • {store.business.name if store.business else 'Mart'}",
-        "short_name": store.name,
-        "start_url": f"{base}/shop?store={store.code}",
-        "scope": base + "/",
+        "name": "REAL MART Shopping",
+        "short_name": "REAL MART",
+        "start_url": f"{base}/supermarket",
+        "scope": f"{base}/supermarket",
         "display": "standalone",
-        "background_color": "#f6fbff",
+        "background_color": "#f7fbfd",
         "theme_color": "#55b8dc",
-        "description": f"Shop online from {store.name}.",
+        "description": "Mobile shopping access for REAL MART marts.",
         "icons": [{"src": f"{base}/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
     })
+
+
+@bp.get("/supermarket/sw.js")
+def supermarket_service_worker():
+    from flask import Response
+    js = """const CACHE='real-mart-supermarket-v1';
+self.addEventListener('install',e=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch',e=>{
+  const u=new URL(e.request.url);
+  if(u.origin!==location.origin||e.request.method!=='GET')return;
+  if(!u.pathname.startsWith('/supermarket'))return;
+  e.respondWith(fetch(e.request).catch(()=>new Response('Shopping app offline',{status:503,headers:{'Content-Type':'text/plain'}})));
+});
+"""
+    return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/supermarket"})

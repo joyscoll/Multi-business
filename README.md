@@ -1,89 +1,23 @@
-# REAL MART
+# REAL MART — separated retail architecture
 
-Unified supermarket POS + online store + inventory + M-PESA + administration platform.
+The current service hostname can be a Render address such as `https://choices-6ej4.onrender.com/` today and a custom domain later. The code never hard-codes the hostname.
 
-## What is included
+## Public customer shop
+`/` is the online ordering site. It is intentionally commerce-first: search, branch choice, categories, compact product cards, prices, basket and checkout. There is no POS link, staff link or admin link in the public chrome.
 
-- Single Flask backend and shared SQLAlchemy domain model.
-- PostgreSQL-ready production configuration; SQLite fallback for local development.
-- Public commerce service: `/`, `/shop`, `/product/<slug>`, `/cart`, `/checkout`, order confirmation and customer QR sharing.
-- Multi-mart install page: `/supermarket` plus per-mart app manifests. Each active Store can have its own online catalogue, prices and stock.
-- Protected cashier PWA/till: `/otcOmc` with barcode/search, cash/M-PESA/card surfaces, receipt printing, shift control and offline-safe shell.
-- Protected master admin: `/fr%2` (with a compatibility `/admin` route) for business-wide sales, branches, catalogue, pricing, users, audit and export.
-- Inventory ledger and store-specific product/pricing records.
-- Shared sale/order/payment model architecture.
-- Daraja adapter with OAuth and STK Push initiation plus callback parsing. Provider results are treated as PENDING until a verified callback changes payment state to PAID/FAILED.
-- Flask-Migrate/Alembic migration structure.
+The customer QR encodes the current site origin at request time (`request.url_root`). It therefore follows whichever host is serving the application instead of embedding a permanent Render or `.com` URL.
 
-## Local setup
+## Multi-mart mobile install
+`/supermarket` is the separate mobile shopping/install entry. The manifest and service worker are scoped to `/supermarket`, so its PWA does not control POS/admin pages. The installed app uses standalone display and therefore does not show browser address controls during normal use.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-python init_db.py
-flask --app app run --debug
-```
+## POS / cashier application
+`/otcOmc` is deliberately not linked from the public shop. An unauthenticated visit goes to `/otcOmc/login`; successful cashiers land directly on the till. The POS PWA service worker is scoped only to `/otcOmc`. `/pos` compatibility routes have been removed.
 
-Default local admin comes from `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env`.
+## Master admin
+`/fr%2` is the protected control centre. `/fr%2/login` is its dedicated login. Admin has access to catalogue/prices, marts, users, audit, system errors, security and backups. It is not linked from public or POS navigation.
 
-## Render
+## Security boundary
+Customer requests do not receive the POS UI or staff navigation. POS product lookup and sale endpoints require an authenticated cashier permission and validate store ownership. The public product API does not return stock counts. Online payment requests are checked against the recorded order total, while POS payment initiation requires cashier authorization. Payment credentials stay server-side. Public server errors are replaced with a generic page and recorded in the protected System Errors screen.
 
-Render uses `pip install -r requirements.txt` for the build and Gunicorn for production in this project. `Procfile` and `render.yaml` are included. The first boot runs `init_db.py` so a fresh Postgres database is created automatically. Flask-Migrate is included for subsequent schema evolution; add and commit migrations as the model evolves. Configure production secrets in Render Environment Variables instead of committing `.env`.
-
-Required production variables at minimum:
-
-- `SECRET_KEY`
-- `DATABASE_URL` (automatically wired by `render.yaml` when using the Blueprint)
-- `PAYMENT_CREDENTIAL_ENCRYPTION_KEY` for database-stored integration credentials if that settings UI is enabled
-- Daraja values: `DARAJA_ENV`, `DARAJA_CONSUMER_KEY`, `DARAJA_CONSUMER_SECRET`, `DARAJA_SHORTCODE`, `DARAJA_PASSKEY`, `DARAJA_CALLBACK_URL`
-
-For Render, the `render.yaml` creates the web service and a Postgres database. You can deploy from the repo root using the Blueprint workflow or create a Python web service manually.
-
-## Important production hardening before live trading
-
-1. Complete offline queue processing with `client_operation_id` idempotency and server-side reconciliation; the included endpoint deliberately does not auto-commit offline envelopes yet.
-2. Add business/store administration screens, catalogue CSV/XLSX import, supplier receiving workflows, returns/refunds, delivery assignment, backup/export/restore jobs, and tax configuration.
-3. Store Daraja credentials using the encrypted `PaymentIntegration` model only; do not expose secrets to browser JavaScript.
-4. Add a production-grade object-storage adapter for product images and receipts.
-5. Add tests for payments, inventory, pricing limits, authorization, concurrency and duplicate callbacks before taking live payments.
-
-## Project structure
-
-```text
-real-mart/
-  app.py
-  config.py
-  models.py
-  extensions.py
-  routes/
-  services/
-    pricing.py
-    audit.py
-    crypto.py
-    payments/
-  templates/
-  static/
-  migrations/
-  requirements.txt
-  Procfile
-  render.yaml
-```
-
-## Route philosophy
-
-The public root is the customer-facing `.com` experience. `/supermarket` is the install/discovery layer for multiple marts. `/otcOmc` is intentionally non-obvious and reserved for authenticated cashier operations. `/fr%2` is the master control centre and is not linked from the public navigation.
-
-## Deployment URL model
-
-The customer storefront is always the service root `/`. The hostname can be a Render URL such as `https://choices-6ej4.onrender.com/` today and a custom `.com` later; no code should hard-code `.com`.
-
-The application uses relative paths:
-
-- `/` — customer shopping/storefront
-- `/supermarket` — multi-mart discovery and mobile install page
-- `/otcOmc` — protected cashier till/PWA
-- `/fr%2` — protected master administration
-
-For production, attach a persistent Render Postgres database through `DATABASE_URL`. SQLite is only a fallback for local development; it is not a persistent production store on Render.
+## Deployment
+Render should use the bundled Postgres service through `DATABASE_URL`. SQLite is local-development only. The app bootstraps missing tables on first start so a new database cannot fail with `no such table: stores`.

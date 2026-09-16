@@ -450,6 +450,22 @@ class AuditLog(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
 
 
+class SystemError(db.Model):
+    __tablename__ = "system_errors"
+    id = db.Column(db.String(36), primary_key=True, default=uid)
+    business_id = db.Column(db.String(36), db.ForeignKey("businesses.id"), index=True)
+    level = db.Column(db.String(20), default="ERROR", nullable=False)
+    code = db.Column(db.String(120), nullable=False)
+    message = db.Column(db.String(1000), nullable=False)
+    path = db.Column(db.String(500))
+    method = db.Column(db.String(20))
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"))
+    ip_address = db.Column(db.String(80))
+    user_agent = db.Column(db.Text)
+    resolved = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False, index=True)
+
+
 class OfflineOperation(db.Model):
     __tablename__ = "offline_operations"
     id = db.Column(db.String(36), primary_key=True, default=uid)

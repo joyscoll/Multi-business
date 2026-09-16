@@ -2,7 +2,7 @@ from decimal import Decimal
 from flask import Blueprint, flash, redirect, render_template, request, url_for, Response
 from flask_login import current_user, login_required
 from extensions import db
-from models import Product, StoreProduct, PricingRule, PriceHistory, InventoryTransaction, User, AuditLog, Sale, Order, Store, Business, Category
+from models import Product, StoreProduct, PricingRule, PriceHistory, InventoryTransaction, User, AuditLog, Sale, Order, Store, Business, Category, SystemError, OfflineOperation, Payment
 from services.pricing import suggested_price
 from services.audit import audit
 from services.export import export_business
@@ -127,8 +127,47 @@ def audit_logs():
     return render_template("admin/audit.html", logs=logs)
 
 
+@bp.get("/admin/system-errors")
+@admin_required("reports.view")
+def system_errors():
+    errors = SystemError.query.filter_by(business_id=current_user.business_id).order_by(SystemError.created_at.desc()).limit(300).all()
+    return render_template("admin/system_errors.html", errors=errors)
+
+
+@bp.get("/admin/security")
+@admin_required("reports.view")
+def security():
+    users = User.query.filter_by(business_id=current_user.business_id).order_by(User.name).all()
+    failedish = AuditLog.query.filter_by(business_id=current_user.business_id).order_by(AuditLog.created_at.desc()).limit(100).all()
+    return render_template("admin/security.html", users=users, logs=failedish)
+
+
+@bp.get("/admin/backups")
+@admin_required("backup.create")
+def backups():
+    latest = AuditLog.query.filter_by(business_id=current_user.business_id).filter(AuditLog.action.in_(["BACKUP_EXPORTED","BACKUP_CREATED"])).order_by(AuditLog.created_at.desc()).limit(20).all()
+    return render_template("admin/backups.html", latest=latest)
+
+
+@bp.post("/admin/users/<user_id>/toggle")
+@admin_required("users.manage")
+def toggle_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user or user.business_id != current_user.business_id:
+        return "Not found", 404
+    if user.id == current_user.id:
+        flash("You cannot disable your own account.", "error")
+        return redirect(url_for("admin.users"))
+    user.is_active = not user.is_active
+    db.session.commit()
+    audit("USER_STATUS_CHANGED", "User", user.id, new_values={"is_active": user.is_active})
+    flash("User status updated.", "success")
+    return redirect(url_for("admin.users"))
+
+
 @bp.get("/admin/export.json")
 @admin_required("backup.create")
 def export_json():
     payload = export_business(current_user.business_id)
+    audit("BACKUP_EXPORTED", "Business", current_user.business_id, new_values={"format":"json"})
     return Response(json.dumps(payload, default=str), mimetype="application/json", headers={"Content-Disposition": "attachment; filename=real-mart-export.json"})
