@@ -9,7 +9,7 @@ bp = Blueprint("auth", __name__)
 
 def _login(target):
     if current_user.is_authenticated:
-        return redirect("/fr%2" if target == "admin" else "/212324")
+        return redirect("/admin" if target == "admin" else "/mypp/on")
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -27,20 +27,30 @@ def _login(target):
                 return redirect(request.args.get("next") or ("/fr%2" if target == "admin" else "/212324"))
         else:
             flash("Invalid username or password.", "error")
-    return render_template("auth/login.html", target=target, pwa_manifest="/212324/manifest.webmanifest" if target == "pos" else None)
+    return render_template("auth/login.html", target=target, pwa_manifest="/mypp/manifest.webmanifest" if target == "pos" else None)
 
 
 
-@bp.route("/212324/login", methods=["GET", "POST"])
+@bp.route("/mypp", methods=["GET", "POST"])
 def pos_login():
-    if current_user.is_authenticated:
-        return redirect("/212324")
+    if current_user.is_authenticated and current_user.has_permission("sales.create"):
+        return redirect("/mypp/on")
     return _login("pos")
 
 
-@bp.route("/fr%2/login", methods=["GET", "POST"])
+@bp.route("/212324/login", methods=["GET", "POST"])
+def legacy_pos_login():
+    return pos_login()
+
+
+@bp.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     return _login("admin")
+
+
+@bp.route("/fr%2/login", methods=["GET", "POST"])
+def legacy_admin_login():
+    return admin_login()
 
 
 @bp.post("/logout")

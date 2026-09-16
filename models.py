@@ -14,6 +14,16 @@ def now():
     return datetime.now(timezone.utc)
 
 
+class SystemSetting(db.Model):
+    __tablename__ = "system_settings"
+    id = db.Column(db.String(36), primary_key=True, default=uid)
+    business_id = db.Column(db.String(36), db.ForeignKey("businesses.id"), nullable=False, index=True)
+    key = db.Column(db.String(120), nullable=False, index=True)
+    value = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime(timezone=True), default=now, onupdate=now, nullable=False)
+    __table_args__ = (db.UniqueConstraint("business_id", "key", name="uq_business_setting"),)
+
+
 class Business(db.Model):
     __tablename__ = "businesses"
     id = db.Column(db.String(36), primary_key=True, default=uid)

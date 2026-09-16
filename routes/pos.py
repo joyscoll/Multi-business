@@ -2,7 +2,7 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, jsonify, render_template, request, redirect
 from flask_login import current_user, login_required
 from extensions import csrf, db
-from models import Sale, SaleItem, StoreProduct, InventoryTransaction, Shift, CashDrawerTransaction, Payment, now, Store
+from models import Sale, SaleItem, StoreProduct, InventoryTransaction, Shift, CashDrawerTransaction, Payment, now, Store, User
 from services.audit import audit
 
 bp = Blueprint("pos", __name__)
@@ -19,10 +19,10 @@ def cashier_required(fn):
     return wrapped
 
 
-@bp.get("/212324")
+@bp.get("/mypp/on")
 def dashboard_entry():
     if not current_user.is_authenticated:
-        return redirect("/212324/login?next=/212324")
+        return redirect("/mypp?next=/mypp/on")
     if not current_user.has_permission("sales.create") or not current_user.store_id:
         return "Forbidden", 403
     return dashboard()
@@ -32,27 +32,44 @@ def dashboard_entry():
 def dashboard():
     store = db.session.get(Store, current_user.store_id)
     shift = Shift.query.filter_by(store_id=current_user.store_id, cashier_id=current_user.id, status="OPEN").first()
-    return render_template("pos/index.html", store=store, shift=shift, pwa_manifest="/212324/manifest.webmanifest")
+    last_agent = User.query.filter(User.business_id == current_user.business_id, User.store_id == current_user.store_id, User.id != current_user.id, User.last_login_at.isnot(None)).order_by(User.last_login_at.desc()).first()
+    return render_template("pos/index.html", store=store, shift=shift, pwa_manifest="/mypp/manifest.webmanifest", last_agent=last_agent)
+
+
+@bp.get("/212324")
+def legacy_pos_entry():
+    return redirect("/mypp/on")
 
 
 @bp.get("/212324/manifest.webmanifest")
+def legacy_manifest():
+    return redirect("/mypp/manifest.webmanifest")
+
+
+@bp.get("/212324/sw.js")
+def legacy_sw():
+    return redirect("/mypp/sw.js")
+
+
+@bp.get("/mypp/manifest.webmanifest")
 def pos_manifest():
     base=request.host_url.rstrip("/")
     return jsonify({
-        "name":"REAL MART Till", "short_name":"Till", "start_url":f"{base}/212324",
-        "scope":f"{base}/212324", "display":"standalone", "background_color":"#24180f",
+        "name":"REAL MART Till", "short_name":"Till", "start_url":f"{base}/mypp/on",
+        "scope":f"{base}/mypp", "display":"standalone", "background_color":"#24180f",
         "theme_color":"#f29b38", "description":"Cashier till application.",
         "icons":[{"src":f"{base}/static/pwa/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}],
     })
 
 
-@bp.get("/212324/sw.js")
+@bp.get("/mypp/sw.js")
 def pos_service_worker():
     from flask import Response
-    js="""const CACHE='real-mart-till-v5';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/212324'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Till connection unavailable',{status:503}))))});\n"""
-    return Response(js,mimetype="application/javascript",headers={"Service-Worker-Allowed":"/212324"})
+    js="""const CACHE='real-mart-agent-v1';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/mypp'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Till connection unavailable',{status:503}))))});\n"""
+    return Response(js,mimetype="application/javascript",headers={"Service-Worker-Allowed":"/mypp"})
 
 
+@bp.get("/mypp/receipt/<receipt_number>")
 @bp.get("/212324/receipt/<receipt_number>")
 @cashier_required
 def receipt(receipt_number):

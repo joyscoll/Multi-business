@@ -28,7 +28,7 @@ def selected_store():
 def catalogue_query(store=None, q="", category=""):
     query = (StoreProduct.query.join(Product)
              .filter(StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True),
-                     Product.status == "ACTIVE"))
+                     StoreProduct.stock_quantity > StoreProduct.reserved_quantity, Product.status == "ACTIVE"))
     if store:
         query = query.filter(StoreProduct.store_id == store.id)
     if category:

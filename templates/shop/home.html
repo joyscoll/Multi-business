@@ -1,8 +1,8 @@
 {% extends 'base.html' %}
 {% block content %}
-<section class="shop-hero"><div class="shop-hero-copy"><div class="eyebrow">{{store.name if store else 'ONLINE STORE'}}</div><h1>Shop everyday essentials.</h1><p>Fresh food, household goods, personal care and more — priced and stocked by the mart.</p></div><div class="qr-panel"><img src="{{url_for('shop.app_qr')}}" alt="QR code"><div><strong>Scan to shop</strong><span>Open this store on your phone.</span></div></div></section>
+<section class="shop-hero"><div class="shop-hero-copy"><div class="eyebrow">{{store.name if store else 'ONLINE STORE'}}</div><h1>Shop everyday essentials.</h1><p>Bread, packaged milk, pantry staples, fresh produce, beverages, household goods and everyday Kenyan supermarket essentials.</p></div><div class="qr-panel"><img src="{{url_for('shop.app_qr')}}" alt="QR code"><div><strong>Scan to shop</strong><span>Open this store on your phone.</span></div></div></section>
 {% if stores|length > 1 %}<div class="branch-row"><span class="branch-label">Shopping from</span>{% for s in stores %}<a class="branch-pill {% if store and s.id==store.id %}active{% endif %}" href="/?store={{s.code}}">{{s.name}}</a>{% endfor %}</div>{% endif %}
-<section class="catalogue-block"><div class="section-line"><div><h2>Browse everything</h2><span>{{products|length}} items shown</span></div><a href="/shop">View full catalogue →</a></div>
+<section class="catalogue-block"><div class="section-line"><div><h2>Shop everyday essentials</h2><span>{{products|length}} products shown · more available through search</span></div><a href="/shop">View full catalogue →</a></div>
 <div class="category-tabs"><a class="active" href="/">All</a>{% for c in categories[:14] %}<a href="/shop?category={{c.id}}&store={{store.code if store else ''}}">{{c.name}}</a>{% endfor %}</div>
 <div class="product-grid dense-shop-grid">{% for item in products %}{% include 'shop/_card.html' %}{% else %}<div class="empty-shop">No online products are active yet.</div>{% endfor %}</div></section>
 {% endblock %}

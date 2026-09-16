@@ -4,7 +4,7 @@ from flask import Flask, jsonify, redirect, url_for, request, render_template
 from flask_login import current_user
 from config import Config
 from extensions import db, migrate, login_manager, csrf
-from models import User, Business, SystemError
+from models import User, Business, SystemError, SystemSetting
 
 
 def create_app():
@@ -42,7 +42,9 @@ def create_app():
 
     @app.context_processor
     def inject_globals():
-        return {"business_name": app.config["BUSINESS_NAME"], "currency": app.config["CURRENCY"], "title": None}
+        business = Business.query.first()
+        footer = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first().value if business and SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first() else "All rights reserved · Denmart Merchants"
+        return {"business_name": business.name if business else app.config["BUSINESS_NAME"], "currency": app.config["CURRENCY"], "footer_text": footer, "title": None}
 
     @app.get("/healthz")
     def healthz():

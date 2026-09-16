@@ -2,8 +2,9 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
 from extensions import csrf, db
-from models import Product, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business
+from models import Product, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business, PaymentIntegration
 from services.payments.daraja import DarajaProvider
+from services.crypto import decrypt
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -21,7 +22,7 @@ def product_search():
     # PUBLIC catalogue: never expose stock, cost, supplier, internal IDs beyond
     # the cart-facing StoreProduct token, or operational endpoints.
     q = request.args.get("q", "").strip(); store_id = request.args.get("store_id")
-    query = StoreProduct.query.join(Product).filter(StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True), Product.status == "ACTIVE")
+    query = StoreProduct.query.join(Product).filter(StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True), StoreProduct.stock_quantity > StoreProduct.reserved_quantity, Product.status == "ACTIVE")
     if store_id: query = query.filter(StoreProduct.store_id == store_id)
     if q:
         like = f"%{q}%"
@@ -96,6 +97,27 @@ def create_order():
     return jsonify(ok=True,order_id=order.id,order_number=order_number,total=str(order.total),payment_status=order.payment_status)
 
 
+def configured_daraja():
+    integration = None
+    if current_user.is_authenticated:
+        integration = PaymentIntegration.query.filter_by(business_id=current_user.business_id, provider="SAFARICOM", is_active=True).first()
+    if not integration:
+        integration = PaymentIntegration.query.filter_by(provider="SAFARICOM", is_active=True).first()
+    if integration:
+        try:
+            return DarajaProvider(
+                decrypt(integration.consumer_key_encrypted) or "", decrypt(integration.consumer_secret_encrypted) or "",
+                decrypt(integration.shortcode_encrypted) or "", decrypt(integration.passkey_encrypted) or "",
+                integration.environment or "sandbox", integration.callback_url or current_app.config["DARAJA_CALLBACK_URL"]
+            )
+        except Exception:
+            pass
+    return DarajaProvider(current_app.config["DARAJA_CONSUMER_KEY"], current_app.config["DARAJA_CONSUMER_SECRET"],
+                          current_app.config["DARAJA_SHORTCODE"], current_app.config["DARAJA_PASSKEY"],
+                          current_app.config["DARAJA_ENV"], current_app.config["DARAJA_CALLBACK_URL"])
+
+
+@csrf.exempt
 @bp.post("/payments/mpesa/initiate")
 @bp.post("/payments/daraja/initiate")
 def mpesa_initiate():
@@ -113,12 +135,29 @@ def mpesa_initiate():
     if order_id and entity.payment_status=="PAID": return jsonify(error="already_paid"),409
     payment=Payment(business_id=entity.business_id,store_id=entity.store_id,sale_id=sale_id,order_id=order_id,provider="SAFARICOM",method="MPESA",amount=amount,currency=current_app.config["CURRENCY"],status="PENDING",phone_number=phone)
     db.session.add(payment);db.session.flush()
-    provider=DarajaProvider(current_app.config["DARAJA_CONSUMER_KEY"],current_app.config["DARAJA_CONSUMER_SECRET"],current_app.config["DARAJA_SHORTCODE"],current_app.config["DARAJA_PASSKEY"],current_app.config["DARAJA_ENV"],current_app.config["DARAJA_CALLBACK_URL"])
+    provider=configured_daraja()
     try: response=provider.initiate_payment(amount=amount,phone_number=phone,account_reference=(entity.receipt_number if sale_id else entity.order_number),transaction_desc="Retail purchase")
     except Exception:
         db.session.rollback(); return jsonify(error="payment_provider_unavailable"),502
     payment.merchant_request_id=response.get("MerchantRequestID");payment.checkout_request_id=response.get("CheckoutRequestID");payment.external_reference=response.get("CustomerMessage");db.session.commit()
     return jsonify(ok=True,payment_id=payment.id,status="PENDING",message="Payment prompt sent")
+
+
+@bp.get("/payments/<payment_id>/status")
+def payment_status(payment_id):
+    payment = db.session.get(Payment, payment_id)
+    if not payment:
+        return jsonify(error="payment_not_found"), 404
+    data = {"ok": True, "payment_id": payment.id, "status": payment.status, "amount": str(payment.amount),
+            "receipt": payment.provider_transaction_id, "message": payment.failure_message}
+    if payment.order_id:
+        order = db.session.get(Order, payment.order_id)
+        data["order_status"] = order.status if order else None
+        data["payment_status"] = order.payment_status if order else None
+    elif payment.sale_id:
+        sale = db.session.get(Sale, payment.sale_id)
+        data["payment_status"] = sale.payment_status if sale else None
+    return jsonify(data)
 
 
 @csrf.exempt
@@ -157,6 +196,18 @@ def mpesa_callback():
             if sale:sale.payment_status="FAILED"
     payment.raw_provider_reference=str(payload);db.session.commit()
     return jsonify(ResultCode=0,ResultDesc="Accepted"),200
+
+
+@bp.get("/pos/orders")
+@cashier_api
+def pos_orders():
+    from models import Customer
+    rows = (Order.query.filter_by(store_id=current_user.store_id)
+            .order_by(Order.created_at.desc()).limit(80).all())
+    return jsonify(items=[{
+        "order_number": o.order_number, "customer": (o.customer.name if getattr(o, "customer", None) else "Online customer"),
+        "total": str(o.total), "payment_status": o.payment_status, "status": o.status
+    } for o in rows])
 
 
 @csrf.exempt
