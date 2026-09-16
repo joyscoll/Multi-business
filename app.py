@@ -50,10 +50,6 @@ def create_app():
 
     @app.post("/pulse_receiver")
     def pulse_receiver():
-        return ("", 204)
-
-    @app.post("/pulse_receiver")
-    def pulse_receiver():
         # Quiet compatibility endpoint for an external health pulse. It never
         # returns internal state or accepts operational commands.
         return ("", 204)
