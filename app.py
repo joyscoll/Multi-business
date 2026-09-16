@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone
-from flask import Flask, jsonify, redirect, url_for, request, render_template
+from flask import Flask, Blueprint, jsonify, redirect, url_for, request, render_template
 from flask_login import current_user
 from config import Config
 from extensions import db, migrate, login_manager, csrf
@@ -15,6 +15,7 @@ def create_app():
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
+    login_manager.login_view = None
     csrf.init_app(app)
 
     from routes.auth import bp as auth_bp
@@ -46,8 +47,8 @@ def create_app():
         # visitors to the correct login screen instead of relying on a
         # single Flask-Login endpoint that does not exist.
         target = request.args.get("next", "")
-        if request.path.startswith("/admin") or request.path.startswith("/fr"):
-            return redirect(f"/admin/login?next={request.path}")
+        if request.path.startswith("/fr") or request.path.startswith("/admin"):
+            return redirect(f"/fr%252?next={request.path}")
         return redirect(f"/mypp?next={request.path}")
 
     @app.context_processor
@@ -60,12 +61,13 @@ def create_app():
     def healthz():
         return {"status": "ok", "service": "real-mart", "time": datetime.now(timezone.utc).isoformat()}
 
-    @csrf.exempt
-    @app.post("/pulse_receiver")
+    # External pulse endpoint is deliberately isolated from CSRF.
+    pulse_bp = Blueprint("pulse", __name__)
+    @pulse_bp.post("/pulse_receiver")
     def pulse_receiver():
-        # Quiet compatibility endpoint for an external health pulse. It never
-        # returns internal state or accepts operational commands.
         return ("", 204)
+    csrf.exempt(pulse_bp)
+    app.register_blueprint(pulse_bp)
 
     @app.errorhandler(404)
     def not_found(_):
