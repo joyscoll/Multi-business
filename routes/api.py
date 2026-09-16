@@ -3,7 +3,7 @@ import re
 from flask import Blueprint, current_app, jsonify, request, session
 from flask_login import current_user, login_required
 from extensions import csrf, db
-from models import Product, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business, PaymentIntegration
+from models import Product, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business, PaymentIntegration, SystemSetting
 from services.payments.daraja import DarajaProvider
 from services.crypto import decrypt
 
@@ -147,7 +147,8 @@ def configured_daraja(business_id):
             except Exception:
                 extra = {}
         transaction_type = extra.get("transaction_type", "CustomerPayBillOnline")
-        till_number = str(extra.get("till_number") or "").strip()
+        till_setting = SystemSetting.query.filter_by(business_id=business_id, key="mpesa_till_number").first()
+        till_number = str(till_setting.value or "").strip() if till_setting else ""
         effective_shortcode = till_number if transaction_type == "CustomerBuyGoodsOnline" and till_number else shortcode
         provider = DarajaProvider(
             decrypt(integration.consumer_key_encrypted) or "",
