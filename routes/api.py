@@ -138,14 +138,7 @@ def configured_daraja(business_id):
     if not integration:
         return None
     try:
-        provider = DarajaProvider(
-            decrypt(integration.consumer_key_encrypted) or "",
-            decrypt(integration.consumer_secret_encrypted) or "",
-            decrypt(integration.shortcode_encrypted) or "",
-            decrypt(integration.passkey_encrypted) or "",
-            integration.environment or "sandbox",
-            integration.callback_url or current_app.config.get("DARAJA_CALLBACK_URL", ""),
-        )
+        shortcode = decrypt(integration.shortcode_encrypted) or ""
         extra = {}
         if integration.other_credentials_encrypted:
             try:
@@ -153,7 +146,19 @@ def configured_daraja(business_id):
                 extra = json.loads(decrypt(integration.other_credentials_encrypted) or "{}")
             except Exception:
                 extra = {}
-        provider.transaction_type = extra.get("transaction_type", "CustomerPayBillOnline")
+        transaction_type = extra.get("transaction_type", "CustomerPayBillOnline")
+        till_number = str(extra.get("till_number") or "").strip()
+        effective_shortcode = till_number if transaction_type == "CustomerBuyGoodsOnline" and till_number else shortcode
+        provider = DarajaProvider(
+            decrypt(integration.consumer_key_encrypted) or "",
+            decrypt(integration.consumer_secret_encrypted) or "",
+            effective_shortcode,
+            decrypt(integration.passkey_encrypted) or "",
+            integration.environment or "sandbox",
+            integration.callback_url or current_app.config.get("DARAJA_CALLBACK_URL", ""),
+        )
+        provider.transaction_type = transaction_type
+        provider.till_number = till_number
         if not all([provider.consumer_key, provider.consumer_secret, provider.shortcode, provider.passkey, provider.callback_url]):
             return None
         return provider

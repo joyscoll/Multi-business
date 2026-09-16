@@ -353,8 +353,12 @@ def settings():
                         request.form.get("consumer_secret", "").strip() or decrypt(integration.consumer_secret_encrypted or ""),
                         request.form.get("shortcode", "").strip() or decrypt(integration.shortcode_encrypted or ""),
                         request.form.get("passkey", "").strip() or decrypt(integration.passkey_encrypted or "")]
+            transaction_type = request.form.get("transaction_type", "CustomerPayBillOnline")
+            till_number = request.form.get("till_number", "").strip()
+            if transaction_type == "CustomerBuyGoodsOnline" and not till_number:
+                required.append("")
             integration.is_active = requested_active and all(required) and integration.callback_url.startswith("https://")
-            extra = {"transaction_type": request.form.get("transaction_type", "CustomerPayBillOnline")}
+            extra = {"transaction_type": transaction_type, "till_number": till_number}
             for field, form_name in [("consumer_key_encrypted","consumer_key"),("consumer_secret_encrypted","consumer_secret"),("shortcode_encrypted","shortcode"),("passkey_encrypted","passkey")]:
                 value = request.form.get(form_name, "").strip()
                 if value: setattr(integration, field, encrypt(value))
@@ -367,11 +371,14 @@ def settings():
     setting = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first()
     callback = integration.callback_url if integration and integration.callback_url else url_for("api.mpesa_callback", _external=True)
     transaction_type = "CustomerPayBillOnline"
+    till_number = ""
     if integration and integration.other_credentials_encrypted:
         try:
-            transaction_type = json.loads(decrypt(integration.other_credentials_encrypted) or "{}").get("transaction_type", transaction_type)
+            extra = json.loads(decrypt(integration.other_credentials_encrypted) or "{}")
+            transaction_type = extra.get("transaction_type", transaction_type)
+            till_number = str(extra.get("till_number") or "").strip()
         except Exception:
             pass
     return render_template("admin/settings.html", business=business, integration=integration,
                            footer_text=setting.value if setting else "All rights reserved · Denmart Merchants",
-                           callback_url=callback, transaction_type=transaction_type)
+                           callback_url=callback, transaction_type=transaction_type, till_number=till_number)
