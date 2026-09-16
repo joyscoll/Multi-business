@@ -1,27 +1,113 @@
-const $=s=>document.querySelector(s);let cart=[];const HOLD_KEY='real-mart-held-sales';
-const VIEW_TITLES={sale:'New sale',catalogue:'Catalogue',held:'Held sales',summary:'Day summary',orders:'Online orders',drawer:'Cash drawer',shift:'Shift'};
+const $ = s => document.querySelector(s);
+let cart = [];
+const HOLD_KEY = 'denmart-held-sales-v13';
+const VIEW_TITLES = {sale:'New sale',catalogue:'Catalogue',held:'Held sales',summary:'Day summary',orders:'Online orders',drawer:'Cash drawer',shift:'Shift'};
+const IDB_NAME = 'denmart-pos-local';
+const IDB_VERSION = 1;
+
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function status(){const on=navigator.onLine;$('#networkStatus').textContent=on?'ONLINE':'OFFLINE';$('#networkStatus').className='live-dot '+(on?'on':'off')}
-window.addEventListener('online',status);window.addEventListener('offline',status);status();
-async function searchPOS(){const q=$('#posSearch').value.trim();if(!q){$('#posSearch').focus();return;}const url=/^\d{6,}$/.test(q)?`/api/pos/products/barcode/${encodeURIComponent(q)}`:`/api/pos/products/search?q=${encodeURIComponent(q)}`;try{const r=await fetch(url);const d=await r.json();const rows=d.items||[d];$('#productResults').innerHTML=rows.filter(x=>x&&x.id).map(x=>{const initials=String(x.name||'RM').split(/\s+/).slice(0,2).map(v=>v[0]).join('').toUpperCase();const media=x.image_url?`<img src="${esc(x.image_url)}" alt="" loading="lazy" onerror="this.outerHTML='<span class=\"pos-initials\">${esc(initials)}</span>'">`:`<span class="pos-initials">${esc(initials)}</span>`;return `<button class="pos-product" onclick='addPOS(${JSON.stringify(x.id)},${JSON.stringify(x.name)},${Number(x.price)},${Number(x.stock||0)})'>${media}<span><strong>${esc(x.name)}</strong><small>${esc(x.barcode||x.sku||'Catalogue')}</small></span><b>KES ${Number(x.price).toFixed(0)}</b></button>`}).join('')||'<div class="pos-empty">No matching product.</div>'}catch(e){$('#productResults').innerHTML='<div class="pos-empty">Terminal could not reach the catalogue.</div>'}}
-window.addPOS=function(id,name,price,stock){const x=cart.find(i=>i.id===id);if(x)x.qty++;else cart.push({id,name,price:Number(price),qty:1,stock:Number(stock)});renderCart();$('#posSearch').select()};
-window.resumeSale=function(){const h=JSON.parse(localStorage.getItem(HOLD_KEY)||'[]');if(!h.length)return toast('No held sales');cart=h.pop().items||[];localStorage.setItem(HOLD_KEY,JSON.stringify(h));renderCart();toast('Held sale recalled')};
-window.showDaySummary=async function(){await loadDaySummary()};
-window.loadDaySummary=async function(){const r=await fetch('/api/pos/day-summary');const d=await r.json();if(!r.ok)return toast(d.error||'Summary unavailable');const el=$('#summaryCards'); if(el) el.innerHTML=`<div class=\"mini-stat\"><small>Paid sales</small><strong>${d.sales_count}</strong></div><div class=\"mini-stat\"><small>Sales total</small><strong>KES ${Number(d.sales_total).toFixed(2)}</strong></div><div class=\"mini-stat\"><small>Cash</small><strong>KES ${Number(d.cash_sales).toFixed(2)}</strong></div>`;toast(`Today: ${d.sales_count} paid sales · KES ${Number(d.sales_total).toFixed(2)}`)};
-window.cashDrawer=async function(kind){const amount=prompt('Amount (KES)','0');if(!amount)return;const notes=prompt('Note','')||'';const r=await fetch('/api/pos/cash-drawer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind,amount,notes})});const d=await r.json();toast(r.ok?'Drawer entry recorded.':(d.error||'Drawer entry failed'))};
+function money(n){return `KES ${Number(n||0).toFixed(2)}`}
+function status(){const on=navigator.onLine;$('#networkStatus').textContent=on?'ONLINE':'OFFLINE';$('#networkStatus').className='live-dot '+(on?'on':'off');$('#networkStatus').title=on?'Connected to Denmart server':'Offline — cached catalogue and queued cash/card sales remain available'}
+window.addEventListener('online',()=>{status();syncOffline();});window.addEventListener('offline',status);status();
+
+function openLocalDB(){return new Promise((resolve,reject)=>{
+  if(!('indexedDB' in window)) return resolve(null);
+  const req=indexedDB.open(IDB_NAME,IDB_VERSION);
+  req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains('catalogue'))db.createObjectStore('catalogue',{keyPath:'id'});if(!db.objectStoreNames.contains('queue'))db.createObjectStore('queue',{keyPath:'client_ref'});if(!db.objectStoreNames.contains('scans'))db.createObjectStore('scans',{keyPath:'id',autoIncrement:true});};
+  req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+})}
+async function idbPut(storeName,value){const db=await openLocalDB();if(!db)return;return new Promise((resolve,reject)=>{const tx=db.transaction(storeName,'readwrite');tx.objectStore(storeName).put(value);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);})}
+async function idbGet(storeName,key){const db=await openLocalDB();if(!db)return null;return new Promise((resolve,reject)=>{const tx=db.transaction(storeName,'readonly');const r=tx.objectStore(storeName).get(key);r.onsuccess=()=>resolve(r.result||null);r.onerror=()=>reject(r.error);})}
+async function idbAll(storeName){const db=await openLocalDB();if(!db)return [];return new Promise((resolve,reject)=>{const tx=db.transaction(storeName,'readonly');const r=tx.objectStore(storeName).getAll();r.onsuccess=()=>resolve(r.result||[]);r.onerror=()=>reject(r.error);})}
+async function idbDelete(storeName,key){const db=await openLocalDB();if(!db)return;return new Promise((resolve,reject)=>{const tx=db.transaction(storeName,'readwrite');tx.objectStore(storeName).delete(key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);})}
+function beep(ok=true){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C(),o=c.createOscillator(),g=c.createGain();o.frequency.value=ok?880:220;g.gain.value=.035;o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+.08)}catch(e){}}
+
+async function cacheProducts(items){for(const item of items||[])await idbPut('catalogue',item)}
+async function warmCache(){if(!navigator.onLine)return;try{const r=await fetch('/api/pos/catalogue/cache?limit=300',{credentials:'same-origin'});if(r.ok){const d=await r.json();await cacheProducts(d.items||[]);}}catch(e){}}
+async function localBarcode(barcode){const rows=await idbAll('catalogue');return rows.find(x=>String(x.barcode||'')===String(barcode))||null}
+
+function productButton(x){
+  const initials=String(x.name||'DM').split(/\s+/).slice(0,2).map(v=>v[0]).join('').toUpperCase();
+  const media=x.image_url?`<img src="${esc(x.image_url)}" alt="" loading="lazy" onerror="this.outerHTML='<span class=\"pos-initials\">${esc(initials)}</span>'">`:`<span class="pos-initials">${esc(initials)}</span>`;
+  return `<button class="pos-product" onclick='addPOS(${JSON.stringify(x.id)},${JSON.stringify(x.name)},${Number(x.price)},${Number(x.stock||0)})'>${media}<span><strong>${esc(x.name)}</strong><small>${esc(x.barcode||x.sku||'Catalogue')}</small></span><b>${money(x.price)}</b></button>`;
+}
+
+async function findBarcode(q){
+  if(!navigator.onLine){const x=await localBarcode(q);if(x){beep(true);await idbPut('scans',{barcode:String(q),at:new Date().toISOString()});return [x]}beep(false);return []}
+  const r=await fetch(`/api/pos/products/barcode/${encodeURIComponent(q)}`,{credentials:'same-origin'});
+  if(r.ok){const d=await r.json();await cacheProducts([d]);await idbPut('scans',{barcode:String(q),at:new Date().toISOString()});beep(true);return [d]}
+  beep(false);return [];
+}
+
+async function searchPOS(){
+  const q=$('#posSearch').value.trim();if(!q){$('#posSearch').focus();return;}
+  try{
+    const rows=/^\d{6,14}$/.test(q)?await findBarcode(q):await searchText(q);
+    $('#productResults').innerHTML=rows.map(productButton).join('')||`<div class="pos-empty">No matching item${navigator.onLine?'':' in the offline catalogue'}.</div>`;
+  }catch(e){$('#productResults').innerHTML='<div class="pos-empty">Terminal could not complete that lookup.</div>';beep(false)}
+}
+async function searchText(q){
+  if(!navigator.onLine){const rows=(await idbAll('catalogue')).filter(x=>`${x.name} ${x.barcode||''} ${x.sku||''}`.toLowerCase().includes(q.toLowerCase())).slice(0,50);return rows}
+  const r=await fetch('/api/pos/products/search?q='+encodeURIComponent(q),{credentials:'same-origin'});const d=await r.json();await cacheProducts(d.items||[]);return d.items||[];
+}
+window.addPOS=function(id,name,price,stock){const x=cart.find(i=>i.id===id);if(x)x.qty++;else cart.push({id,name,price:Number(price),qty:1,stock:Number(stock)});renderCart();$('#posSearch').select();beep(true)};
 window.changeQty=function(i,d){cart[i].qty+=d;if(cart[i].qty<=0)cart.splice(i,1);renderCart()};
 window.removeLine=function(i){cart.splice(i,1);renderCart()};
-function renderCart(){const el=$('#saleLines');let total=0;el.innerHTML=cart.map((x,i)=>{const line=x.price*x.qty;total+=line;return `<div class="sale-line"><div class="sale-line-copy"><strong>${esc(x.name)}</strong><small>KES ${x.price.toFixed(2)} each</small></div><div class="sale-qty"><button onclick="changeQty(${i},-1)">−</button><b>${x.qty}</b><button onclick="changeQty(${i},1)">+</button></div><strong>KES ${line.toFixed(2)}</strong><button class="line-x" onclick="removeLine(${i})">×</button></div>`}).join('')||'<div class="cart-empty"><div>+</div><strong>Ready for the next customer</strong><span>Scan a barcode or search above.</span></div>';$('#saleTotal').textContent=total.toFixed(2);$('#payButtons').classList.toggle('disabled',!cart.length)}
-async function openShift(){const cash=prompt('Opening cash (KES)','0');if(cash===null)return;const r=await fetch('/api/pos/shifts/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({opening_cash:cash})});const d=await r.json();toast(r.ok?'Shift opened.':(d.error||'Could not open shift'));if(r.ok)location.reload()}
-async function closeShift(){const cash=prompt('Counted closing cash (KES)','0');if(cash===null)return;const r=await fetch('/api/pos/shifts/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closing_cash:cash})});const d=await r.json();toast(r.ok?`Shift closed · difference KES ${d.difference}`:(d.error||'Could not close shift'));if(r.ok)setTimeout(()=>location.reload(),900)}
-async function paidCash(){return makeSale('CASH')}
-async function makeSale(method){if(!cart.length)return toast('Add an item first');if(!navigator.onLine&&method==='MPESA')return toast('M-PESA needs an internet connection');const phone=method==='MPESA'?prompt('Customer M-PESA number'):null;if(method==='MPESA'&&!phone)return toast('Payment not started');const reference=method==='CARD'?prompt('Card / external payment reference'):null;if(method==='CARD'&&!reference)return toast('Payment not recorded');const r=await fetch('/api/pos/sales',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payment_method:method,items:cart.map(x=>({store_product_id:x.id,quantity:x.qty})),payment_reference:reference})});const d=await r.json();if(!r.ok)return toast(d.error||'Sale failed');if(method==='MPESA'){const p=await fetch('/api/payments/mpesa/initiate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sale_id:d.sale_id,amount:d.total,phone_number:phone})});const pd=await p.json();if(!p.ok)return toast(pd.error||'M-PESA failed');toast('Payment prompt sent');}else{toast('Sale complete · '+d.receipt_number);window.open('/merchant/receipt/'+encodeURIComponent(d.receipt_number),'_blank','noopener')}cart=[];renderCart()}
-window.loadOrders=async function(){const el=$('#orderList');if(!el)return;el.innerHTML='<div class=\"muted\">Loading…</div>';try{const r=await fetch('/api/pos/orders');const d=await r.json();if(!r.ok){el.innerHTML='<div class=\"muted\">'+esc(d.error||'Unavailable')+'</div>';return}el.innerHTML=(d.items||[]).map(x=>`<div class=\"activity-row\"><div><strong>${esc(x.order_number)}</strong><small>${esc(x.customer||'Online customer')}</small></div><div><b>KES ${Number(x.total).toFixed(2)}</b><small>${esc(x.payment_status)} · ${esc(x.status)}</small></div></div>`).join('')||'<div class=\"muted\">No online orders yet.</div>'}catch(e){el.innerHTML='<div class=\"muted\">Could not load orders.</div>'}};
-window.holdSale=function(){if(!cart.length)return toast('Basket is empty');const h=JSON.parse(localStorage.getItem(HOLD_KEY)||'[]');h.push({at:new Date().toISOString(),items:cart});localStorage.setItem(HOLD_KEY,JSON.stringify(h));cart=[];renderCart();renderHeld();toast('Sale held on this terminal')};
-window.resumeHeld=function(i){const h=JSON.parse(localStorage.getItem(HOLD_KEY)||'[]');const x=h.splice(i,1)[0];if(!x)return;cart=x.items||[];localStorage.setItem(HOLD_KEY,JSON.stringify(h));renderCart();renderHeld();document.querySelector('[data-view=\"sale\"]').click();toast('Held sale recalled')};
-window.renderHeld=function(){const el=$('#heldList');if(!el)return;const h=JSON.parse(localStorage.getItem(HOLD_KEY)||'[]');el.innerHTML=h.map((x,i)=>`<div class=\"activity-row\"><div><strong>Held sale ${i+1}</strong><small>${new Date(x.at).toLocaleString()} · ${(x.items||[]).length} lines</small></div><button class=\"admin-action\" onclick=\"resumeHeld(${i})\">Recall</button></div>`).join('')||'<div class=\"muted\">No held sales on this till.</div>'};
+function renderCart(){const el=$('#saleLines');let total=0;el.innerHTML=cart.map((x,i)=>{const line=x.price*x.qty;total+=line;return `<div class="sale-line"><div class="sale-line-copy"><strong>${esc(x.name)}</strong><small>${money(x.price)} each</small></div><div class="sale-qty"><button onclick="changeQty(${i},-1)">−</button><b>${x.qty}</b><button onclick="changeQty(${i},1)">+</button></div><strong>${money(line)}</strong><button class="line-x" onclick="removeLine(${i})">×</button></div>`}).join('')||'<div class="cart-empty"><div>⌕</div><strong>Ready for the next customer</strong><span>Scan a barcode or search an item.</span></div>';$('#saleTotal').textContent=total.toFixed(2);$('#payButtons').classList.toggle('disabled',!cart.length)}
+
+async function apiJSON(url,options){const r=await fetch(url,{credentials:'same-origin',...options});let d={};try{d=await r.json()}catch(e){}return {r,d}}
+
+async function queueOfflineSale(method){
+  const client_ref=`OFF-${Date.now()}-${crypto.randomUUID?crypto.randomUUID().slice(0,8):Math.random().toString(16).slice(2,10)}`;
+  const payload={client_ref,payment_method:method,items:cart.map(x=>({store_product_id:x.id,quantity:x.qty}))};
+  await idbPut('queue',{...payload,queued_at:new Date().toISOString()});
+  toast(`${method==='CASH'?'Cash':'Card'} sale queued locally`);cart=[];renderCart();renderOfflineQueueBadge();
+}
+async function syncOffline(){if(!navigator.onLine)return;const queued=await idbAll('queue');if(!queued.length)return;try{const {r,d}=await apiJSON('/api/pos/sync/offline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sales:queued})});if(!r.ok)return;for(const item of d.results||[]){if(item.ok)await idbDelete('queue',item.client_ref)}if((d.results||[]).some(x=>x.ok))toast('Offline sales synced to Denmart');renderOfflineQueueBadge()}catch(e){}}
+
+async function makeSale(method){
+  if(!cart.length)return toast('Add an item first');
+  if(method==='MPESA'&&!navigator.onLine)return toast('M-PESA needs an internet connection');
+  if(!navigator.onLine && method!=='MPESA')return queueOfflineSale(method);
+  const phone=method==='MPESA'?prompt('Customer M-PESA number (07xx xxx xxx)',''):null;
+  if(method==='MPESA'&&!phone)return toast('Payment not started');
+  const reference=method==='CARD'?prompt('Card / external payment reference',''):null;
+  if(method==='CARD'&&!reference)return toast('Payment not recorded');
+  const {r,d}=await apiJSON('/api/pos/sales',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payment_method:method,items:cart.map(x=>({store_product_id:x.id,quantity:x.qty})),payment_reference:reference})});
+  if(!r.ok)return toast(d.error||'Sale failed');
+  if(method==='MPESA'){
+    const p=await apiJSON('/api/payments/mpesa/initiate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sale_id:d.sale_id,amount:d.total,phone_number:phone})});
+    if(!p.r.ok)return toast(p.d.message||p.d.error||'M-PESA request failed');
+    toast('M-PESA prompt sent');
+    waitForPayment(p.d.payment_id,d.receipt_number);
+  }else{
+    toast('Sale complete · '+d.receipt_number);window.open('/merchant/receipt/'+encodeURIComponent(d.receipt_number),'_blank','noopener');cart=[];renderCart();
+  }
+}
+async function waitForPayment(paymentId,receiptNumber){
+  let checks=0;const poll=async()=>{checks++;try{const {d}=await apiJSON('/api/payments/'+encodeURIComponent(paymentId)+'/status');if(d.status==='PAID'){toast('M-PESA confirmed · '+receiptNumber);cart=[];renderCart();window.open('/merchant/receipt/'+encodeURIComponent(receiptNumber),'_blank','noopener');return}if(d.status==='FAILED'){toast(d.message||'M-PESA payment failed');return}}catch(e){}if(checks<30)setTimeout(poll,2500);else toast('Payment is still pending — check Online orders or payment status later')};poll();
+}
+
+async function openShift(){const cash=prompt('Opening cash (KES)','0');if(cash===null)return;const {r,d}=await apiJSON('/api/pos/shifts/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({opening_cash:cash})});toast(r.ok?'Shift opened.':(d.error||'Could not open shift'));if(r.ok)location.reload()}
+async function closeShift(){const cash=prompt('Counted closing cash (KES)','0');if(cash===null)return;const {r,d}=await apiJSON('/api/pos/shifts/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closing_cash:cash})});toast(r.ok?`Shift closed · difference ${money(d.difference)}`:(d.error||'Could not close shift'));if(r.ok)setTimeout(()=>location.reload(),900)}
+window.loadDaySummary=async function(){const {r,d}=await apiJSON('/api/pos/day-summary');if(!r.ok)return toast(d.error||'Summary unavailable');const el=$('#summaryCards');if(el)el.innerHTML=`<div class="mini-stat"><small>Paid sales</small><strong>${d.sales_count}</strong></div><div class="mini-stat"><small>Sales total</small><strong>${money(d.sales_total)}</strong></div><div class="mini-stat"><small>Cash</small><strong>${money(d.cash_sales)}</strong></div>`};
+window.cashDrawer=async function(kind){const amount=prompt('Amount (KES)','0');if(!amount)return;const notes=prompt('Note','')||'';const {r,d}=await apiJSON('/api/pos/cash-drawer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind,amount,notes})});toast(r.ok?'Drawer entry recorded.':(d.error||'Drawer entry failed'))};
+window.loadOrders=async function(){const el=$('#orderList');if(!el)return;el.innerHTML='<div class="muted">Loading…</div>';const {r,d}=await apiJSON('/api/pos/orders');if(!r.ok){el.innerHTML='<div class="muted">'+esc(d.error||'Unavailable')+'</div>';return}el.innerHTML=(d.items||[]).map(x=>`<div class="activity-row"><div><strong>${esc(x.order_number)}</strong><small>${esc(x.customer||'Online customer')}</small></div><div><b>${money(x.total)}</b><small>${esc(x.payment_status)} · ${esc(x.status)}</small></div></div>`).join('')||'<div class="muted">No online orders yet.</div>'};
+window.holdSale=async function(){if(!cart.length)return toast('Basket is empty');const h=JSON.parse(localStorage.getItem(HOLD_KEY)||'[]');h.push({at:new Date().toISOString(),items:cart});localStorage.setItem(HOLD_KEY,JSON.stringify(h));cart=[];renderCart();renderHeld();toast('Sale held on this till')};
+window.resumeHeld=function(i){const h=JSON.parse(localStorage.getItem(HOLD_KEY)||'[]');const x=h.splice(i,1)[0];if(!x)return;cart=x.items||[];localStorage.setItem(HOLD_KEY,JSON.stringify(h));renderCart();renderHeld();document.querySelector('[data-view="sale"]').click();toast('Held sale recalled')};
+window.renderHeld=function(){const el=$('#heldList');if(!el)return;const h=JSON.parse(localStorage.getItem(HOLD_KEY)||'[]');el.innerHTML=h.map((x,i)=>`<div class="activity-row"><div><strong>Held sale ${i+1}</strong><small>${new Date(x.at).toLocaleString()} · ${(x.items||[]).length} lines</small></div><button class="admin-action" onclick="resumeHeld(${i})">Recall</button></div>`).join('')||'<div class="muted">No held sales on this till.</div>'};
+window.searchCatalogue=async function(){const q=$('#catalogueSearch')?.value.trim()||'';const rows=await searchText(q);const el=$('#catalogueResults');if(el)el.innerHTML=(rows||[]).map(productButton).join('')||'<div class="pos-empty">No matching product.</div>'};
+function renderOfflineQueueBadge(){idbAll('queue').then(rows=>{const el=$('#offlineQueueCount');if(el)el.textContent=rows.length?`${rows.length} queued`:''})};
+function renderHeld(){window.renderHeld()}
 function setupViews(){document.querySelectorAll('.agent-nav-link').forEach(btn=>btn.addEventListener('click',()=>{const view=btn.dataset.view;document.querySelectorAll('.agent-nav-link').forEach(b=>b.classList.toggle('active',b===btn));document.querySelectorAll('.agent-view').forEach(p=>p.classList.toggle('active',p.dataset.panel===view));const title=$('#agentTitle');if(title)title.textContent=VIEW_TITLES[view]||'Merchant Point';if(view==='held')renderHeld();if(view==='summary')loadDaySummary();if(view==='orders')loadOrders();if(view==='catalogue')searchCatalogue();}));}
-window.searchCatalogue=async function(){const q=$('#catalogueSearch')?.value.trim()||'';const r=await fetch('/api/pos/products/search?q='+encodeURIComponent(q));const d=await r.json();const el=$('#catalogueResults');if(el)el.innerHTML=(d.items||[]).map(x=>{const initials=String(x.name||'RM').split(/\s+/).slice(0,2).map(v=>v[0]).join('').toUpperCase();const media=x.image_url?`<img src=\"${esc(x.image_url)}\" alt=\"\" loading=\"lazy\">`:`<span class=\"pos-initials\">${esc(initials)}</span>`;return `<button class=\"pos-product\" onclick=\"addPOS(${JSON.stringify(x.id)},${JSON.stringify(x.name)},${Number(x.price)},${Number(x.stock||0)})\">${media}<span><strong>${esc(x.name)}</strong><small>${esc(x.barcode||x.sku||'Catalogue')}</small></span><b>KES ${Number(x.price).toFixed(0)}</b></button>`}).join('')||'<div class=\"pos-empty\">No matching product.</div>'};
-function toast(s){let t=$('#posToast');t.textContent=s;t.classList.add('show');clearTimeout(window._pt);window._pt=setTimeout(()=>t.classList.remove('show'),2200)}
-function hotkeys(e){if(e.key==='F2'){e.preventDefault();$('#posSearch').focus()}if(e.key==='Escape'){cart=[];renderCart()}if(e.key==='F4'){e.preventDefault();makeSale('CASH')}}
-window.addEventListener('keydown',hotkeys);setupViews();renderCart();renderHeld();searchPOS();
+let scanBuffer='',scanTimer=null;
+function handleKeyboardScanner(e){
+  const active=document.activeElement;const typing=['INPUT','TEXTAREA'].includes(active?.tagName);
+  if(typing)return;
+  if(/^\d$/.test(e.key)){scanBuffer+=e.key;clearTimeout(scanTimer);scanTimer=setTimeout(()=>{scanBuffer=''},180);return}
+  if(e.key==='Enter'&&scanBuffer.length>=6){const code=scanBuffer;scanBuffer='';e.preventDefault();$('#posSearch').value=code;searchPOS();return}
+  if(e.key==='Enter'&&scanBuffer){scanBuffer='';}
+}
+window.addEventListener('keydown',handleKeyboardScanner);
+$('#posSearch')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchPOS()}});
+setupViews();renderCart();renderHeld();warmCache();if(navigator.onLine)syncOffline();renderOfflineQueueBadge();

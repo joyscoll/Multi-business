@@ -347,16 +347,25 @@ def settings():
                 integration = PaymentIntegration(business_id=business.id, provider="SAFARICOM")
                 db.session.add(integration)
             integration.environment = request.form.get("environment", "sandbox")
-            integration.callback_url = request.form.get("callback_url", "").strip() or None
-            integration.is_active = request.form.get("mpesa_active") == "1"
+            integration.callback_url = request.form.get("callback_url", "").strip() or url_for("api.mpesa_callback", _external=True)
+            requested_active = request.form.get("mpesa_active") == "1"
+            required = [request.form.get("consumer_key", "").strip() or decrypt(integration.consumer_key_encrypted or ""),
+                        request.form.get("consumer_secret", "").strip() or decrypt(integration.consumer_secret_encrypted or ""),
+                        request.form.get("shortcode", "").strip() or decrypt(integration.shortcode_encrypted or ""),
+                        request.form.get("passkey", "").strip() or decrypt(integration.passkey_encrypted or "")]
+            integration.is_active = requested_active and all(required) and integration.callback_url.startswith("https://")
             extra = {"transaction_type": request.form.get("transaction_type", "CustomerPayBillOnline")}
             for field, form_name in [("consumer_key_encrypted","consumer_key"),("consumer_secret_encrypted","consumer_secret"),("shortcode_encrypted","shortcode"),("passkey_encrypted","passkey")]:
                 value = request.form.get(form_name, "").strip()
                 if value: setattr(integration, field, encrypt(value))
             integration.other_credentials_encrypted = encrypt(json.dumps(extra))
-        db.session.commit(); flash("Settings saved.", "success")
+        db.session.commit()
+        if request.form.get("save_mpesa") and request.form.get("mpesa_active") == "1" and not integration.is_active:
+            flash("M-PESA was saved but remains inactive until all credentials and a public HTTPS callback URL are present.", "error")
+        else:
+            flash("Settings saved.", "success")
     setting = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first()
-    callback = integration.callback_url if integration else ""
+    callback = integration.callback_url if integration and integration.callback_url else url_for("api.mpesa_callback", _external=True)
     transaction_type = "CustomerPayBillOnline"
     if integration and integration.other_credentials_encrypted:
         try:

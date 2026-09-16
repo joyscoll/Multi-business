@@ -45,6 +45,10 @@ def image_for(name: str, category: str, brand: str) -> str:
         "Kericho Gold Tea Bags 100s": "https://owinosupermarket.com/cdn/shop/files/rn-image_picker_lib_temp_d2b467a9-75d4-433d-99b6-2b86d6b6807f.jpg?v=1779035646&width=720",
         "Brookside Strawberry Yogurt 500ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/44080/1742392804/44080_main.jpg",
         "Delamere Strawberry Yoghurt 500ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/44079/1742392804/44079_main.jpg",
+        "Daima UHT Milk Fino 500ml": "https://cdn.mafrservices.com/sys-master-root/h0f/h7f/27062187524126/16012_main.jpg?im=Resize%3D376",
+        "Pearl Pishori fortified rice 2Kg": "https://cdn.mafrservices.com/pim-content/KEN/media/product/31962/1720080003/31962_main.jpg?im=Resize%3D480",
+        "Supa Loaf Butter Toast Bread 400g": "https://cdn.mafrservices.com/sys-master-root/h02/ha0/12681201451038/82689_main.jpg?im=Resize%3D376",
+        "Ketepa Catering Tea Bag 100 Tea Bags Tagged": "https://d16zmt6hgq1jhj.cloudfront.net/product/7601/fOBDkMfk1BMxcjqetgBCJ0Yt3g3h2RMiachaLChh.png",
     }
     return exact.get(name, "")
 
@@ -112,7 +116,7 @@ def seed_defaults():
 
     catalog_version = SystemSetting.query.filter_by(business_id=business.id, key="catalog_seed_version").first()
     first_catalog_boot = catalog_version is None
-    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "denmart-2026-09-16-v11")
+    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "denmart-2026-09-16-v13")
     if refresh_catalog_assets:
         for legacy in StoreProduct.query.filter_by(store_id=store.id).all():
             legacy.is_available = False
@@ -121,7 +125,7 @@ def seed_defaults():
         catalog_version = SystemSetting(
             business_id=business.id,
             key="catalog_seed_version",
-            value="denmart-2026-09-16-v11",
+            value="denmart-2026-09-16-v13",
         )
         db.session.add(catalog_version)
 
@@ -215,6 +219,9 @@ def seed_defaults():
                     sp.cost_price = (price * Decimal("0.80")).quantize(Decimal("1"))
                     sp.minimum_price = price
                     sp.maximum_price = price * Decimal("1.30")
+                    sp.is_available = True
+                    sp.available_online = True
+                    sp.available_pos = True
 
             if not ProductAlias.query.filter_by(product_id=product.id, alias=name).first():
                 db.session.add(ProductAlias(product_id=product.id, alias=name, alias_type="SEARCH"))
