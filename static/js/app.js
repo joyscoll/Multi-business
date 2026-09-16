@@ -13,5 +13,5 @@
   function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
   updateCounts();renderCartPage();
   if(document.getElementById('checkoutSummary')){const c=read();document.getElementById('checkoutSummary').innerHTML=c.map(x=>`<div class="summary-line"><span>${escapeHtml(x.name)} × ${x.qty}</span><b>${money(x.price*x.qty)}</b></div>`).join('')||'<span class="muted">No items.</span>';document.getElementById('checkoutTotal').textContent=c.reduce((s,x)=>s+x.price*x.qty,0).toFixed(2);}
-  if(location.pathname==='/supermarket'&&'serviceWorker' in navigator){navigator.serviceWorker.register('/supermarket/sw.js',{scope:'/supermarket'}).catch(()=>{});}
+  if(!location.pathname.startsWith('/control')&&!location.pathname.startsWith('/merchant')&&'serviceWorker' in navigator){navigator.serviceWorker.register('/shop/sw.js',{scope:'/'}).catch(()=>{});}
 })();

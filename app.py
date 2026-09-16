@@ -47,9 +47,9 @@ def create_app():
         # visitors to the correct login screen instead of relying on a
         # single Flask-Login endpoint that does not exist.
         target = request.args.get("next", "")
-        if request.path.startswith("/fr") or request.path.startswith("/admin"):
-            return redirect(f"/fr%252?next={request.path}")
-        return redirect(f"/mypp?next={request.path}")
+        if request.path.startswith("/control"):
+            return redirect(f"/control?next={request.path}")
+        return redirect(f"/merchant?next={request.path}")
 
     @app.context_processor
     def inject_globals():
@@ -64,9 +64,9 @@ def create_app():
     # External pulse endpoint is deliberately isolated from CSRF.
     pulse_bp = Blueprint("pulse", __name__)
     @pulse_bp.post("/pulse_receiver")
+    @csrf.exempt
     def pulse_receiver():
         return ("", 204)
-    csrf.exempt(pulse_bp)
     app.register_blueprint(pulse_bp)
 
     @app.errorhandler(404)

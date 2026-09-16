@@ -5,12 +5,12 @@ from extensions import db
 from models import User
 
 bp = Blueprint("auth", __name__)
-ADMIN_PORTAL = "/fr%252"
+ADMIN_PORTAL = "/control"
 
 
 def _login(target):
     if current_user.is_authenticated:
-        return redirect(ADMIN_PORTAL if target == "admin" else "/mypp/on")
+        return redirect(ADMIN_PORTAL if target == "admin" else "/merchant/on")
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -24,27 +24,21 @@ def _login(target):
                 login_user(user, remember=False, fresh=True)
                 user.last_login_at = datetime.now(timezone.utc)
                 db.session.commit()
-                return redirect(request.args.get("next") or (ADMIN_PORTAL if target == "admin" else "/mypp/on"))
+                return redirect(request.args.get("next") or (ADMIN_PORTAL if target == "admin" else "/merchant/on"))
         else:
             flash("Invalid username or password.", "error")
     return render_template("auth/login.html", target=target,
-                           pwa_manifest="/mypp/manifest.webmanifest" if target == "pos" else None)
+                           pwa_manifest="/merchant/manifest.webmanifest" if target == "pos" else None)
 
 
-@bp.route("/mypp", methods=["GET", "POST"])
+@bp.route("/merchant", methods=["GET", "POST"])
 def pos_login():
     if current_user.is_authenticated and current_user.has_permission("sales.create"):
-        return redirect("/mypp/on")
+        return redirect("/merchant/on")
     return _login("pos")
 
 
-@bp.route("/212324/login", methods=["GET", "POST"])
-def legacy_pos_login():
-    return pos_login()
-
-
 @bp.route(ADMIN_PORTAL, methods=["GET", "POST"])
-@bp.route("/fr%2", methods=["GET", "POST"])
 def hidden_admin_portal():
     if current_user.is_authenticated:
         from routes.admin import _dashboard

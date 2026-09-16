@@ -27,36 +27,20 @@ def slugify(value: str) -> str:
 
 
 def image_for(name: str, category: str, brand: str) -> str:
-    n = name.lower()
+    # Real product photography only where the exact SKU/identity is known.
+    # Unknown long-tail items intentionally use no photo rather than a wrong
+    # repeated supermarket image.
     exact = {
-        "supa loaf": "https://cdn.mafrservices.com/sys-master-root/hb4/h24/12681202991134/82690_main.jpg?im=Resize%3D376",
-        "broadways": "https://cdn.mafrservices.com/pim-content/KEN/media/product/4/1757008803/4_main.jpg",
-        "festive": "https://cdn.mafrservices.com/pim-content/KEN/media/product/25921/1742392804/25921_Main.jpg",
-        "kcc": "https://cdn.mafrservices.com/sys-master-root/hc1/h82/12452122132510/11666_Main.jpg?im=Resize%3D480",
-        "brookside fresh milk": "https://cdn.mafrservices.com/pim-content/KEN/media/product/43316/1742392804/43316_main.jpg",
-        "fresha": "https://cdnprod.mafretailproxy.com/sys-master-root/he4/h01/12462571585566/34849_Main.jpg_480Wx480H",
-        "tuzo whole milk": "https://cdn.mafrservices.com/pim-content/KEN/media/product/43374/1742392804/43374_main.jpg",
-        "tropical heat": "https://cdn.mafrservices.com/pim-content/KEN/media/product/32275/1742392804/32275_main.jpg",
-        "brookside probiotic yoghurt": "https://cdn.mafrservices.com/pim-content/KEN/media/product/43324/1742392804/43324_main.jpg",
-        "rina": "https://cdn.mafrservices.com/pim-content/KEN/media/product/21018/1742392804/21018_main.jpg",
-        "jahazi": "https://cdn.mafrservices.com/pim-content/KEN/media/product/129205/1742392804/129205_main.jpg",
-        "pearl": "https://cdn.mafrservices.com/pim-content/KEN/media/product/31961/1742392804/31961_main.jpg",
-        "manji milkstar": "https://cdn.mafrservices.com/pim-content/KEN/media/product/8229/1742392804/8229_main.jpg",
-        "del monte": "https://cdn.mafrservices.com/pim-content/KEN/media/product/38611/1742392804/38611_main.jpg",
-        "hanan": "https://cdn.mafrservices.com/pim-content/KEN/media/product/22156/1742392804/22156_main.jpg",
-        "colgate": "https://cdn.mafrservices.com/pim-content/KEN/media/product/222023/1742392804/222023_main.jpg",
+        "Superloaf White Bread 400g": "https://cdn.mafrservices.com/sys-master-root/hb4/h24/12681202991134/82690_main.jpg?im=Resize%3D376",
+        "Brookside Fresh Milk 500ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/43276/1742392804/43276_main.jpg",
+        "KCC Fresh Milk 500ml": "https://cdn.mafrservices.com/sys-master-root/hc1/h82/12452122132510/11666_Main.jpg?im=Resize%3D480",
+        "Brookside Yoghurt Strawberry 500ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/43324/1742392804/43324_main.jpg",
+        "Rina Cooking Oil 1L": "https://cdn.mafrservices.com/pim-content/KEN/media/product/21018/1742392804/21018_main.jpg",
+        "Tropical Heat Chilli Lemon Crisps 100g": "https://cdn.mafrservices.com/pim-content/KEN/media/product/32275/1742392804/32275_main.jpg",
+        "Del Monte Mango Juice 1L": "https://cdn.mafrservices.com/pim-content/KEN/media/product/38611/1742392804/38611_main.jpg",
+        "Colgate Maximum Cavity Protection 100ml": "https://cdn.mafrservices.com/pim-content/KEN/media/product/222023/1742392804/222023_main.jpg",
     }
-    for key, url in exact.items():
-        if key in n:
-            return url
-    representative = {
-        "Bread & Bakery": "https://pub-5bcc3edf34304d04b59dc91e1ad9d2fd.r2.dev/kenya.tortoisepath.com/uploads/2024/06/13174821/Naivas-Supermarket-Muindi-Mbingu-Nairobi-Kenya-TortoisePathcom-8-1024x768.jpeg",
-        "Milk & Dairy": "https://images.saymedia-content.com/.image/t_share/MTk0MTAwMjU4MjUzOTczMTY5/investement-opportunities-in-kenya.jpg",
-        "Laundry & Cleaning": "https://cms.eu-central-1.linodeobjects.com/image/2026/08/8e0f3ee2-843a-4ff1-b308-8bd58bd2c5b6.webp",
-        "Household": "https://static.where-e.com/Kenya/Siaya_County/Manna-Lifestyle-Supermarket-Ltd_945300d12acd6aa1ca697b1082f9ffe0.jpg",
-        "Fresh Produce": "https://images.mindtrip.ai/restaurants/663b/eb22/7f3a/ac2d/f2db/57d7/afb8/6369",
-    }
-    return representative.get(category, "https://static.where-e.com/Kenya/Siaya_County/Manna-Lifestyle-Supermarket-Ltd_945300d12acd6aa1ca697b1082f9ffe0.jpg")
+    return exact.get(name, "")
 
 
 def starter_price(category: str, index: int) -> Decimal:
@@ -119,7 +103,7 @@ def seed_defaults():
 
     catalog_version = SystemSetting.query.filter_by(business_id=business.id, key="catalog_seed_version").first()
     first_catalog_boot = catalog_version is None
-    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "ke-2026-09-16-v3")
+    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "ke-2026-09-16-v8")
     if refresh_catalog_assets:
         for legacy in StoreProduct.query.filter_by(store_id=store.id).all():
             legacy.is_available = False
@@ -128,7 +112,7 @@ def seed_defaults():
         catalog_version = SystemSetting(
             business_id=business.id,
             key="catalog_seed_version",
-            value="ke-2026-09-16-v3",
+            value="ke-2026-09-16-v8",
         )
         db.session.add(catalog_version)
 

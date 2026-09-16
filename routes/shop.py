@@ -1,5 +1,5 @@
 from io import BytesIO
-from flask import Blueprint, render_template, request, session, send_file, jsonify
+from flask import Blueprint, render_template, request, session, send_file, jsonify, Response
 from extensions import db
 from models import Product, Store, StoreProduct, Category
 
@@ -43,10 +43,23 @@ def catalogue_query(store=None, q="", category=""):
 @bp.get("/")
 def home():
     store = selected_store()
-    products = catalogue_query(store).limit(96).all()
     categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
                   .order_by(Category.sort_order, Category.name).all()) if store else []
-    return render_template("shop/home.html", stores=active_stores(), store=store, products=products, categories=categories)
+    rows = catalogue_query(store).limit(600).all() if store else []
+    priority = [
+        "sugar", "fresh milk", "yoghurt", "bread", "maize meal", "rice", "cooking oil",
+        "eggs", "tea", "coffee", "water", "tissue", "toilet", "washing", "soap", "biscuits",
+    ]
+    def rank(item):
+        text = f"{item.product.name} {item.product.brand or ''}".lower()
+        for i, term in enumerate(priority):
+            if term in text:
+                return i
+        return 99
+    ranked = sorted(rows, key=lambda x: (rank(x), x.product.name.lower()))
+    essentials = ranked[:24]
+    more_products = [x for x in ranked[24:] if x not in essentials][:32]
+    return render_template("shop/home.html", stores=active_stores(), store=store, essentials=essentials, more_products=more_products, categories=categories)
 
 
 @bp.get("/shop")
@@ -96,36 +109,25 @@ def app_qr():
     return send_file(buf, mimetype="image/png", max_age=3600)
 
 
-@bp.get("/supermarket")
-def supermarket():
-    # Technical installation route; in standalone PWA mode it looks exactly
-    # like the customer shop and contains no "supermarket extension" wording.
-    store = selected_store()
-    products = catalogue_query(store).limit(120).all()
-    categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
-                  .order_by(Category.sort_order, Category.name).all()) if store else []
-    return render_template("shop/home.html", stores=active_stores(), store=store, products=products, categories=categories,
-                           pwa_manifest="/supermarket/manifest.webmanifest", installation_view=True)
-
-
-@bp.get("/supermarket/manifest.webmanifest")
-def supermarket_manifest():
+@bp.get("/shop/manifest.webmanifest")
+def shop_manifest():
     base = request.host_url.rstrip("/")
     return jsonify({
         "name": "REAL MART",
         "short_name": "REAL MART",
-        "start_url": f"{base}/supermarket",
-        "scope": f"{base}/supermarket",
+        "start_url": f"{base}/",
+        "scope": f"{base}/",
         "display": "standalone",
-        "background_color": "#f8fafb",
-        "theme_color": "#fff5e8",
-        "description": "REAL MART shopping app",
+        "background_color": "#f7fafb",
+        "theme_color": "#193849",
+        "description": "REAL MART online supermarket",
         "icons": [{"src": f"{base}/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
     })
 
 
-@bp.get("/supermarket/sw.js")
-def supermarket_service_worker():
-    from flask import Response
-    js = """const CACHE='real-mart-shop-v4';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/supermarket'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Shop unavailable offline',{status:503}))))});\n"""
-    return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/supermarket"})
+@bp.get("/shop/sw.js")
+def shop_service_worker():
+    js = """const CACHE='real-mart-public-v8';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET')return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('REAL MART is temporarily offline',{status:503}))));});\n"""
+    return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/"})
+
+

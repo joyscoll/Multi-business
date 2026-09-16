@@ -1,42 +1,47 @@
-# REAL MART — Kenyan supermarket platform
+# REAL MART V8
 
-## Customer storefront
-- `/` — customer supermarket landing/store.
-- `/shop` — searchable catalogue.
-- `/cart` and `/checkout` — basket and online order checkout.
-- `/order/<order_number>` — order/payment confirmation; M-PESA status updates automatically.
-- `/supermarket` — installable customer PWA.
+Kenya-first supermarket platform with three focused workspaces sharing catalogue, stock, prices, orders and M-PESA payment state.
 
-The starter catalogue is supermarket-oriented (bread, packaged milk, dairy, cereals, flour, rice, sugar, tea, cooking oil, canned food, snacks, beverages, baby care, personal care, household, fresh produce, meat, frozen food, pet supplies and stationery). Products are preloaded; staff manage availability/stock instead of manually building the catalogue.
+## Customer store
+- `/` — clean online storefront
+- `/shop` — complete catalogue/search
+- `/cart` — basket
+- `/checkout` — customer checkout
+- `/order/<order_number>` — order/payment status
 
-## Merchant / agent workstation
-- `/mypp` — agent login.
-- `/mypp/on` — the one-screen Merchant Point workstation.
-- `/mypp/manifest.webmanifest` and `/mypp/sw.js` — installable agent PWA.
+The home page deliberately promotes everyday Kenyan basket items first (sugar, packaged fresh milk, yoghurt, bread, maize meal, rice, cooking oil, eggs, tea and coffee). Products without an exact verified photograph use a restrained brand-initial tile instead of a reused/wrong image.
 
-The workstation remembers the last agent who logged in at the same mart and provides a sidebar for sales, catalogue search, held sales, day summary, online orders, cash drawer and shift controls. Sign out is at the bottom of the sidebar. The footer text is admin-editable.
+## Merchant Point
+- `/merchant` — cashier/agent sign-in
+- `/merchant/on` — single-screen till workspace
+- `/merchant/manifest.webmanifest` and `/merchant/sw.js` — installable PWA
 
-`/212324` remains a compatibility redirect for older installations.
+## Master control
+- `/control` — secure master-admin sign-in and dashboard
+- `/control/products` — catalogue visibility and price control
+- `/control/stores` — marts/branches
+- `/control/users` — staff and access
+- `/control/pricing` — pricing rules
+- `/control/settings` — business identity and Safaricom Daraja settings
+- `/control/expenses` — expenses
+- `/control/audit` — audit trail
+- `/control/system-errors` — protected error records
+- `/control/security` — security overview
+- `/control/backups` — business export/recovery tools
 
-## Master admin
-- `/admin/login` — master admin login.
-- `/admin` — master control centre.
-- `/admin/settings` — business identity and Safaricom Daraja configuration.
+## Operational model
+The catalogue is seeded as a realistic starter master list. StoreProduct availability controls determine whether an item can be sold online and/or at POS. Admins therefore disable stock they do not carry rather than manually constructing the whole supermarket.
 
-`/fr%2` remains as a legacy admin path for older bookmarks.
-
-## M-PESA / Daraja
-The platform supports Safaricom STK push initiation and callback reconciliation. Admins configure the active integration from `/admin/settings`; credentials are encrypted at rest. The online checkout sends the M-PESA prompt, then polls the payment record until it becomes `PAID` or `FAILED`.
-
-For live service, set the Daraja environment to production and use a public HTTPS callback such as:
-`https://YOUR-DOMAIN/api/payments/daraja/callback`
-
-Safaricom's current developer platform is Daraja 3.0.
-
-## Catalogue philosophy
-The catalogue is designed as a preloaded master inventory rather than an empty system that requires an administrator to add every item. The included seed provides a realistic Kenyan supermarket starter catalogue with unique remote product-photo URLs so the same placeholder image is not intentionally reused for every item.
-
-The database/query design uses indexed product/store relations and server-side limits, so the storefront can scale to very large catalogues. Do not fabricate hundreds of thousands of fake SKUs solely to create a large number; load additional real product identities through a deployment/import pipeline when a larger master catalogue is available.
+The schema is designed for a much larger catalogue and controlled imports when a genuine supplier/product feed is available; the application does not invent hundreds of thousands of fake SKUs.
 
 ## Deployment
-`Procfile`, `render.yaml`, `requirements.txt` and database bootstrap are included. PostgreSQL is the intended production database. Configure `ADMIN_USERNAME` and `ADMIN_PASSWORD` in Render.
+Render can run:
+
+    gunicorn app:app
+
+or the included `render.yaml` / `Procfile`, which initialize the database before starting Gunicorn.
+
+Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `DATABASE_URL`, `SECRET_KEY`, and the Daraja configuration values in the Render environment as appropriate for the deployment.
+
+## Important
+This V8 build intentionally uses only the canonical routes above.

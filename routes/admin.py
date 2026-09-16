@@ -12,7 +12,7 @@ from services.export import export_business
 from services.crypto import encrypt
 
 bp = Blueprint("admin", __name__)
-ADMIN_BASE = "/fr%252"
+ADMIN_BASE = "/control"
 
 
 def admin_required(permission=None):
@@ -54,14 +54,6 @@ def _dashboard():
                            expenses_total=expenses_total, cost_total=cost_total, gross_profit=gross_profit,
                            net_result=net_result, orders=orders, low_stock=low_stock,
                            products_online=products_online, stores=stores, recent=recent)
-
-
-# The browser sends the literal percent sign escaped as %25, so this is the
-# HTTP form of the requested hidden route /fr%2. Both forms are supported.
-@bp.get("/fr%2")
-@bp.get("/fr%252")
-def dashboard_obscured():
-    return _dashboard()
 
 
 @bp.get(f"{ADMIN_BASE}/products")

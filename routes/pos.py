@@ -19,10 +19,10 @@ def cashier_required(fn):
     return wrapped
 
 
-@bp.get("/mypp/on")
+@bp.get("/merchant/on")
 def dashboard_entry():
     if not current_user.is_authenticated:
-        return redirect("/mypp?next=/mypp/on")
+        return redirect("/merchant?next=/merchant/on")
     if not current_user.has_permission("sales.create") or not current_user.store_id:
         return "Forbidden", 403
     return dashboard()
@@ -33,44 +33,28 @@ def dashboard():
     store = db.session.get(Store, current_user.store_id)
     shift = Shift.query.filter_by(store_id=current_user.store_id, cashier_id=current_user.id, status="OPEN").first()
     last_agent = User.query.filter(User.business_id == current_user.business_id, User.store_id == current_user.store_id, User.id != current_user.id, User.last_login_at.isnot(None)).order_by(User.last_login_at.desc()).first()
-    return render_template("pos/index.html", store=store, shift=shift, pwa_manifest="/mypp/manifest.webmanifest", last_agent=last_agent)
+    return render_template("pos/index.html", store=store, shift=shift, pwa_manifest="/merchant/manifest.webmanifest", last_agent=last_agent)
 
 
-@bp.get("/212324")
-def legacy_pos_entry():
-    return redirect("/mypp/on")
-
-
-@bp.get("/212324/manifest.webmanifest")
-def legacy_manifest():
-    return redirect("/mypp/manifest.webmanifest")
-
-
-@bp.get("/212324/sw.js")
-def legacy_sw():
-    return redirect("/mypp/sw.js")
-
-
-@bp.get("/mypp/manifest.webmanifest")
+@bp.get("/merchant/manifest.webmanifest")
 def pos_manifest():
     base=request.host_url.rstrip("/")
     return jsonify({
-        "name":"REAL MART Till", "short_name":"Till", "start_url":f"{base}/mypp/on",
-        "scope":f"{base}/mypp", "display":"standalone", "background_color":"#24180f",
+        "name":"REAL MART Till", "short_name":"Till", "start_url":f"{base}/merchant/on",
+        "scope":f"{base}/merchant", "display":"standalone", "background_color":"#24180f",
         "theme_color":"#f29b38", "description":"Cashier till application.",
         "icons":[{"src":f"{base}/static/pwa/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}],
     })
 
 
-@bp.get("/mypp/sw.js")
+@bp.get("/merchant/sw.js")
 def pos_service_worker():
     from flask import Response
-    js="""const CACHE='real-mart-agent-v1';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/mypp'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Till connection unavailable',{status:503}))))});\n"""
-    return Response(js,mimetype="application/javascript",headers={"Service-Worker-Allowed":"/mypp"})
+    js="""const CACHE='real-mart-agent-v1';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/merchant'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Till connection unavailable',{status:503}))))});\n"""
+    return Response(js,mimetype="application/javascript",headers={"Service-Worker-Allowed":"/merchant"})
 
 
-@bp.get("/mypp/receipt/<receipt_number>")
-@bp.get("/212324/receipt/<receipt_number>")
+@bp.get("/merchant/receipt/<receipt_number>")
 @cashier_required
 def receipt(receipt_number):
     sale=Sale.query.filter_by(receipt_number=receipt_number).first_or_404()
