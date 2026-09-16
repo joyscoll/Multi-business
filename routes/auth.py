@@ -15,7 +15,11 @@ def login():
         user = User.query.filter((User.email == identity) | (User.username == identity)).first()
         if user and user.is_active and user.check_password(password):
             login_user(user, remember=True)
-            return redirect(request.args.get("next") or url_for("pos.dashboard"))
+            if request.args.get("next"):
+                return redirect(request.args["next"])
+            if user.role and user.role.name in {"OWNER", "ADMIN", "MANAGER", "ACCOUNTANT", "STOCK_CONTROLLER"}:
+                return redirect("/fr%2")
+            return redirect(url_for("pos.dashboard"))
         flash("Invalid login details.", "error")
     return render_template("auth/login.html")
 

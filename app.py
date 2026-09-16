@@ -33,7 +33,7 @@ def create_app():
 
     @app.context_processor
     def inject_globals():
-        return {"business_name": app.config["BUSINESS_NAME"], "currency": app.config["CURRENCY"]}
+        return {"business_name": app.config["BUSINESS_NAME"], "currency": app.config["CURRENCY"], "title": None}
 
     @app.get("/healthz")
     def healthz():

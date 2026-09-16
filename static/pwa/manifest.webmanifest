@@ -1,1 +1,1 @@
-{"name":"REAL MART POS","short_name":"REAL MART","start_url":"/pos","display":"standalone","background_color":"#f3f4f6","theme_color":"#111827","icons":[{"src":"/static/pwa/icon.svg","sizes":"any","type":"image/svg+xml"}]}
+{"name":"REAL MART","short_name":"REAL MART","start_url":"/shop","scope":"/","display":"standalone","background_color":"#f4f8fb","theme_color":"#55b8dc","description":"REAL MART online shopping experience","icons":[{"src":"/static/pwa/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}

@@ -3,7 +3,7 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
 from extensions import csrf
 from extensions import db
-from models import Product, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now
+from models import Product, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business
 from services.payments.daraja import DarajaProvider
 
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -37,8 +37,11 @@ def barcode(barcode):
 def create_order():
     data = request.get_json(silent=True) or {}
     store_id = data.get("store_id")
-    if not store_id:
-        from models import Store
+    store_code = (data.get("store_code") or "").strip()
+    if store_code:
+        store = Store.query.filter_by(code=store_code, is_active=True).first()
+        store_id = store.id if store else None
+    elif not store_id:
         store = Store.query.filter_by(is_active=True).order_by(Store.created_at).first()
         store_id = store.id if store else None
     if not store_id:
@@ -59,10 +62,22 @@ def create_order():
         line = Decimal(sp.selling_price) * qty
         subtotal += line
         store_product_rows.append((sp, qty, line))
-    from models import Business
     business = db.session.get(Business, store_product_rows[0][0].store.business_id)
     order_number = f"RM-{now().strftime('%Y%m%d')}-{Order.query.count()+1:05d}"
-    order = Order(business_id=business.id, store_id=store_id, order_number=order_number, subtotal=subtotal, total=subtotal,
+    customer_data = data.get("customer") or {}
+    customer = None
+    phone = (customer_data.get("phone") or "").strip()
+    email = (customer_data.get("email") or "").strip().lower()
+    name = (customer_data.get("name") or "").strip()
+    if phone or email:
+        customer = Customer.query.filter((Customer.phone == phone) | (Customer.email == email)).first() if (phone or email) else None
+        if not customer:
+            customer = Customer(business_id=business.id, name=name or "Online customer", phone=phone or None, email=email or None)
+            db.session.add(customer); db.session.flush()
+        else:
+            customer.name = name or customer.name
+            customer.address = data.get("delivery_address") or customer.address
+    order = Order(business_id=business.id, store_id=store_id, order_number=order_number, customer_id=customer.id if customer else None, subtotal=subtotal, total=subtotal,
                   delivery_address=data.get("delivery_address"), delivery_notes=data.get("delivery_notes"))
     db.session.add(order); db.session.flush()
     for sp, qty, line in store_product_rows:
@@ -74,7 +89,6 @@ def create_order():
 
 @bp.post("/payments/mpesa/initiate")
 @bp.post("/payments/daraja/initiate")
-@login_required
 def mpesa_initiate():
     data = request.get_json(silent=True) or {}
     amount = Decimal(str(data.get("amount", 0)))
@@ -84,8 +98,12 @@ def mpesa_initiate():
     if amount <= 0 or not phone: return jsonify(error="amount_and_phone_required"), 400
     if not sale_id and not order_id: return jsonify(error="sale_or_order_required"), 400
     entity = db.session.get(Sale, sale_id) if sale_id else db.session.get(Order, order_id)
-    if not entity or entity.store_id != current_user.store_id: return jsonify(error="entity_not_found"), 404
-    payment = Payment(business_id=current_user.business_id, store_id=current_user.store_id, sale_id=sale_id, order_id=order_id,
+    if not entity: return jsonify(error="entity_not_found"), 404
+    if current_user.is_authenticated and entity.store_id != current_user.store_id:
+        return jsonify(error="entity_not_found"), 404
+    business_id = entity.business_id
+    store_id = entity.store_id
+    payment = Payment(business_id=business_id, store_id=store_id, sale_id=sale_id, order_id=order_id,
                       provider="SAFARICOM", method="MPESA", amount=amount, currency=current_app.config["CURRENCY"], status="PENDING", phone_number=phone)
     db.session.add(payment); db.session.flush()
     provider = DarajaProvider(current_app.config["DARAJA_CONSUMER_KEY"], current_app.config["DARAJA_CONSUMER_SECRET"], current_app.config["DARAJA_SHORTCODE"], current_app.config["DARAJA_PASSKEY"], current_app.config["DARAJA_ENV"], current_app.config["DARAJA_CALLBACK_URL"])

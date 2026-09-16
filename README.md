@@ -6,9 +6,10 @@ Unified supermarket POS + online store + inventory + M-PESA + administration pla
 
 - Single Flask backend and shared SQLAlchemy domain model.
 - PostgreSQL-ready production configuration; SQLite fallback for local development.
-- Public storefront: `/`, `/shop`, `/product/<slug>`, `/cart`, `/checkout`.
-- Authenticated PWA POS: `/pos` with barcode/search, cash sales, M-PESA initiation surface, local PWA assets, and offline UI state.
-- Admin dashboard: `/admin`, products/prices, pricing rules, users, audit log.
+- Public commerce service: `/`, `/shop`, `/product/<slug>`, `/cart`, `/checkout`, order confirmation and customer QR sharing.
+- Multi-mart install page: `/supermarket` plus per-mart app manifests. Each active Store can have its own online catalogue, prices and stock.
+- Protected cashier PWA/till: `/otcOmc` with barcode/search, cash/M-PESA/card surfaces, receipt printing, shift control and offline-safe shell.
+- Protected master admin: `/fr%2` (with a compatibility `/admin` route) for business-wide sales, branches, catalogue, pricing, users, audit and export.
 - Inventory ledger and store-specific product/pricing records.
 - Shared sale/order/payment model architecture.
 - Daraja adapter with OAuth and STK Push initiation plus callback parsing. Provider results are treated as PENDING until a verified callback changes payment state to PAID/FAILED.
@@ -69,3 +70,7 @@ real-mart/
   Procfile
   render.yaml
 ```
+
+## Route philosophy
+
+The public root is the customer-facing `.com` experience. `/supermarket` is the install/discovery layer for multiple marts. `/otcOmc` is intentionally non-obvious and reserved for authenticated cashier operations. `/fr%2` is the master control centre and is not linked from the public navigation.

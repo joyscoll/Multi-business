@@ -1,28 +1,71 @@
 from decimal import Decimal
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, jsonify as _jsonify
 from flask_login import current_user, login_required
-from extensions import csrf
-from extensions import db
-from models import Sale, SaleItem, StoreProduct, InventoryTransaction, Payment, Shift, now
+from extensions import csrf, db
+from models import Sale, SaleItem, StoreProduct, InventoryTransaction, Payment, Shift, now, Store
 from services.audit import audit
 
 bp = Blueprint("pos", __name__)
 
-@bp.get("/pos")
-@login_required
-def dashboard():
-    return render_template("pos/index.html")
 
-@bp.get("/pos/receipt/<receipt_number>")
-@login_required
+def cashier_required(fn):
+    from functools import wraps
+    @wraps(fn)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if not current_user.has_permission("sales.create"):
+            return "Forbidden", 403
+        return fn(*args, **kwargs)
+    return wrapped
+
+
+@bp.get("/otcOmc")
+@cashier_required
+def dashboard():
+    store = db.session.get(Store, current_user.store_id) if current_user.store_id else None
+    return render_template("pos/index.html", store=store, pwa_manifest="/otcOmc/manifest.webmanifest")
+
+
+@bp.get("/otcOmc/manifest.webmanifest")
+def pos_manifest():
+    base = request.host_url.rstrip("/")
+    return _jsonify({
+        "name": "REAL MART Till",
+        "short_name": "Mart Till",
+        "start_url": base + "/otcOmc",
+        "scope": base + "/otcOmc",
+        "display": "standalone",
+        "background_color": "#12202a",
+        "theme_color": "#55b8dc",
+        "description": "Cashier till for REAL MART.",
+        "icons": [{"src": base + "/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+    })
+
+@bp.get("/pos")
+@cashier_required
+def legacy_dashboard():
+    return dashboard()
+
+
+@bp.get("/otcOmc/receipt/<receipt_number>")
+@cashier_required
 def receipt(receipt_number):
     sale = Sale.query.filter_by(receipt_number=receipt_number).first_or_404()
+    if sale.store_id != current_user.store_id and not current_user.has_permission("reports.view"):
+        return "Forbidden", 403
     items = SaleItem.query.filter_by(sale_id=sale.id).all()
     return render_template("pos/receipt.html", sale=sale, items=items)
 
+
+@bp.get("/pos/receipt/<receipt_number>")
+@cashier_required
+def legacy_receipt(receipt_number):
+    return receipt(receipt_number)
+
+
 @csrf.exempt
 @bp.post("/api/pos/sales")
-@login_required
+@cashier_required
 def create_sale():
     data = request.get_json(silent=True) or {}
     if not current_user.store_id:
@@ -47,7 +90,9 @@ def create_sale():
     receipt_number = f"RM-{now().strftime('%Y%m%d-%H%M%S')}-{Sale.query.count()+1:05d}"
     sale = Sale(business_id=current_user.business_id, store_id=current_user.store_id, cashier_id=current_user.id,
                 receipt_number=receipt_number, subtotal=subtotal, total=subtotal,
-                status="COMPLETED" if payment_method == "CASH" else "PENDING", payment_status="PAID" if payment_method == "CASH" else "PENDING", completed_at=now() if payment_method == "CASH" else None)
+                status="COMPLETED" if payment_method == "CASH" else "PENDING",
+                payment_status="PAID" if payment_method == "CASH" else "PENDING",
+                completed_at=now() if payment_method == "CASH" else None)
     db.session.add(sale)
     db.session.flush()
     for sp, qty, line in prepared:
@@ -61,9 +106,10 @@ def create_sale():
     audit("SALE_CREATED", "Sale", sale.id, new_values={"total": str(sale.total), "payment_method": payment_method})
     return jsonify(ok=True, sale_id=sale.id, receipt_number=receipt_number, payment_status=sale.payment_status, total=str(sale.total))
 
+
 @csrf.exempt
 @bp.post("/api/pos/shifts/open")
-@login_required
+@cashier_required
 def open_shift():
     if not current_user.store_id:
         return jsonify(error="user_has_no_store"), 400
