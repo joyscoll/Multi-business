@@ -18,6 +18,12 @@ services:
         value: production
       - key: AUTO_INIT_DB
         value: "1"
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: BACKUP_ENABLED
+        value: "1"
       - key: DARAJA_ENV
         value: sandbox
       - key: CURRENCY

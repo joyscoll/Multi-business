@@ -1,23 +1,24 @@
-# REAL MART — separated retail architecture
+# REAL MART — production-oriented multi-mart retail base
 
-The current service hostname can be a Render address such as `https://choices-6ej4.onrender.com/` today and a custom domain later. The code never hard-codes the hostname.
+## Surfaces
 
-## Public customer shop
-`/` is the online ordering site. It is intentionally commerce-first: search, branch choice, categories, compact product cards, prices, basket and checkout. There is no POS link, staff link or admin link in the public chrome.
+- `/` is the customer shopping site. It is a dense retail catalogue with search, categories, branch selection, basket and checkout. It does not link to POS or admin.
+- `/supermarket` is a technical PWA installation entry. In standalone mode the app is named **REAL MART** and renders the same shopping experience; the technical route is not presented in the shopping UI.
+- `/212324` is the hidden computer-only cashier terminal. It has its own login, PWA manifest, service-worker scope, product API, shift controls and sale APIs.
+- `/fr%2` is the protected master control centre. It is not linked from the public shopping UI or the cashier terminal.
 
-The customer QR encodes the current site origin at request time (`request.url_root`). It therefore follows whichever host is serving the application instead of embedding a permanent Render or `.com` URL.
+## Administrator credentials
 
-## Multi-mart mobile install
-`/supermarket` is the separate mobile shopping/install entry. The manifest and service worker are scoped to `/supermarket`, so its PWA does not control POS/admin pages. The installed app uses standalone display and therefore does not show browser address controls during normal use.
+Production requires `ADMIN_USERNAME` and `ADMIN_PASSWORD` in the Render environment. There is no default production administrator password. The first boot creates/updates the master owner account from those environment values.
 
-## POS / cashier application
-`/otcOmc` is deliberately not linked from the public shop. An unauthenticated visit goes to `/otcOmc/login`; successful cashiers land directly on the till. The POS PWA service worker is scoped only to `/otcOmc`. `/pos` compatibility routes have been removed.
+## Important security boundary
 
-## Master admin
-`/fr%2` is the protected control centre. `/fr%2/login` is its dedicated login. Admin has access to catalogue/prices, marts, users, audit, system errors, security and backups. It is not linked from public or POS navigation.
+The customer API never returns stock or cost data. Cashier product APIs require authenticated cashier access and are restricted to the cashier's assigned mart. POS and shopping service workers have separate scopes and no shared global service worker is used.
 
-## Security boundary
-Customer requests do not receive the POS UI or staff navigation. POS product lookup and sale endpoints require an authenticated cashier permission and validate store ownership. The public product API does not return stock counts. Online payment requests are checked against the recorded order total, while POS payment initiation requires cashier authorization. Payment credentials stay server-side. Public server errors are replaced with a generic page and recorded in the protected System Errors screen.
+The QR endpoint `/app-qr.png` encodes `request.url_root`, so it represents the site hosting the application rather than a hard-coded Render or future `.com` address.
 
 ## Deployment
-Render should use the bundled Postgres service through `DATABASE_URL`. SQLite is local-development only. The app bootstraps missing tables on first start so a new database cannot fail with `no such table: stores`.
+
+The supplied Render blueprint creates a PostgreSQL database and expects the master administrator credentials to be entered as secret environment variables. The normal start command initializes the database before Gunicorn starts.
+
+For long-term production, use persistent PostgreSQL rather than SQLite and run database backups at the deployment/database layer. `scripts/backup_postgres.sh` and `scripts/restore_postgres.sh` are retained for controlled operations.

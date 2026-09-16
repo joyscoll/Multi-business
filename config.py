@@ -29,6 +29,8 @@ class Config:
     CURRENCY = os.getenv("CURRENCY", "KES")
     TIMEZONE = os.getenv("TIMEZONE", "Africa/Nairobi")
     BUSINESS_NAME = os.getenv("BUSINESS_NAME", "REAL MART")
+    ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
+    ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
     DARAJA_ENV = os.getenv("DARAJA_ENV", "sandbox")
     DARAJA_CONSUMER_KEY = os.getenv("DARAJA_CONSUMER_KEY", "")
     DARAJA_CONSUMER_SECRET = os.getenv("DARAJA_CONSUMER_SECRET", "")

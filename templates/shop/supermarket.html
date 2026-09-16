@@ -1,2 +1,1 @@
-{% extends 'base.html' %}
-{% block content %}<section class="compact-head"><div><div class="eyebrow">MOBILE SHOPPING</div><h1>Shop from your mart.</h1></div><a href="/" class="button soft">Back to shop</a></section><div class="store-grid">{% for s in stores %}<a class="store-card" href="/shop?store={{s.code}}"><div class="store-mark">{{s.name[:1]}}</div><div><b>{{s.name}}</b><span>{{s.address or 'Local branch'}}</span></div><strong>Shop →</strong></a>{% else %}<div class="card"><b>No mart is online yet.</b></div>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}{% block content %}{% include 'shop/home.html' %}{% endblock %}

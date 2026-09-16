@@ -48,6 +48,16 @@ def create_app():
     def healthz():
         return {"status": "ok", "service": "real-mart", "time": datetime.now(timezone.utc).isoformat()}
 
+    @app.post("/pulse_receiver")
+    def pulse_receiver():
+        return ("", 204)
+
+    @app.post("/pulse_receiver")
+    def pulse_receiver():
+        # Quiet compatibility endpoint for an external health pulse. It never
+        # returns internal state or accepts operational commands.
+        return ("", 204)
+
     @app.errorhandler(404)
     def not_found(_):
         return render_template("errors/not_found.html"), 404

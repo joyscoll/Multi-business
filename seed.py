@@ -1,4 +1,7 @@
 import os
+
+if not os.getenv("ADMIN_USERNAME") or not os.getenv("ADMIN_PASSWORD"):
+    raise RuntimeError("ADMIN_USERNAME and ADMIN_PASSWORD must be set in the environment")
 from app import app
 from extensions import db
 from models import Business, Store, Role, Permission, User, Category, Product, PricingRule, StoreProduct
@@ -30,10 +33,10 @@ with app.app_context():
             r.permissions=[perms[c] for c in codes]
         db.session.add(r); roles[name]=r
     db.session.flush()
-    email=os.getenv("ADMIN_EMAIL","admin@realmart.local").lower()
+    email=None
     user=User.query.filter_by(email=email).first()
     if not user:
-        user=User(business_id=b.id,store_id=store.id,name="REAL MART Owner",email=email,username="owner",role_id=roles["OWNER"].id,password_hash=generate_password_hash(os.getenv("ADMIN_PASSWORD","ChangeMe123!")))
+        user=User(business_id=b.id,store_id=store.id,name="REAL MART Owner",email=email,username=os.getenv("ADMIN_USERNAME"),role_id=roles["OWNER"].id,password_hash=generate_password_hash(os.getenv("ADMIN_PASSWORD")))
         db.session.add(user)
     cat=Category.query.filter_by(business_id=b.id,name="General").first()
     if not cat:

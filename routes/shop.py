@@ -1,6 +1,5 @@
-from decimal import Decimal
 from io import BytesIO
-from flask import Blueprint, render_template, request, session, redirect, url_for, jsonify, send_file
+from flask import Blueprint, render_template, request, session, send_file, jsonify
 from extensions import db
 from models import Product, Store, StoreProduct, Category
 
@@ -26,50 +25,47 @@ def selected_store():
     return stores[0] if stores else None
 
 
-@bp.get("/")
-def home():
-    stores = active_stores()
-    featured_store = selected_store()
-    products = []
-    categories = []
-    if featured_store:
-        products = (StoreProduct.query.join(Product)
-                    .filter(StoreProduct.store_id == featured_store.id,
-                            StoreProduct.is_available.is_(True),
-                            StoreProduct.available_online.is_(True))
-                    .order_by(Product.name).limit(12).all())
-        categories = (Category.query.filter_by(business_id=featured_store.business_id, is_active=True)
-                      .order_by(Category.sort_order, Category.name).limit(12).all())
-    return render_template("shop/home.html", stores=stores, featured_store=featured_store, products=products, categories=categories)
-
-
-@bp.get("/shop")
-def shop():
-    q = request.args.get("q", "").strip()
-    store = selected_store()
-    category = request.args.get("category", "").strip()
-    query = StoreProduct.query.join(Product).filter(StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True))
+def catalogue_query(store=None, q="", category=""):
+    query = (StoreProduct.query.join(Product)
+             .filter(StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True),
+                     Product.status == "ACTIVE"))
     if store:
         query = query.filter(StoreProduct.store_id == store.id)
     if category:
         query = query.filter(Product.category_id == category)
     if q:
         like = f"%{q}%"
-        query = query.filter((Product.name.ilike(like)) | (Product.brand.ilike(like)) | (Product.search_keywords.ilike(like)) | (Product.barcode.ilike(like)))
-    products = query.order_by(Product.name).limit(150).all()
-    categories = []
-    if store:
-        categories = Category.query.filter_by(business_id=store.business_id, is_active=True).order_by(Category.sort_order, Category.name).all()
+        query = query.filter((Product.name.ilike(like)) | (Product.brand.ilike(like)) |
+                             (Product.search_keywords.ilike(like)) | (Product.barcode.ilike(like)))
+    return query.order_by(Product.name)
+
+
+@bp.get("/")
+def home():
+    store = selected_store()
+    products = catalogue_query(store).limit(96).all()
+    categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
+                  .order_by(Category.sort_order, Category.name).all()) if store else []
+    return render_template("shop/home.html", stores=active_stores(), store=store, products=products, categories=categories)
+
+
+@bp.get("/shop")
+def shop():
+    q = request.args.get("q", "").strip()
+    category = request.args.get("category", "").strip()
+    store = selected_store()
+    products = catalogue_query(store, q=q, category=category).limit(300).all()
+    categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
+                  .order_by(Category.sort_order, Category.name).all()) if store else []
     return render_template("shop/shop.html", products=products, q=q, store=store, stores=active_stores(), categories=categories)
 
 
 @bp.get("/product/<slug>")
 def product(slug):
     store = selected_store()
-    query = StoreProduct.query.join(Product).filter(Product.slug == slug, StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True))
-    if store:
-        query = query.filter(StoreProduct.store_id == store.id)
-    item = query.first_or_404()
+    item = (StoreProduct.query.join(Product)
+            .filter(Product.slug == slug, StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True), Product.status == "ACTIVE")
+            .filter(StoreProduct.store_id == store.id if store else True).first_or_404())
     return render_template("shop/product.html", item=item, store=store)
 
 
@@ -94,53 +90,42 @@ def order_confirmation(order_number):
 @bp.get("/app-qr.png")
 def app_qr():
     import qrcode
-    img = qrcode.make(request.url_root)
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
+    # The QR represents the site origin, never a hard-coded Render/custom domain.
+    img = qrcode.make(request.url_root.rstrip("/"))
+    buf = BytesIO(); img.save(buf, format="PNG"); buf.seek(0)
     return send_file(buf, mimetype="image/png", max_age=3600)
 
 
 @bp.get("/supermarket")
 def supermarket():
-    stores = active_stores()
-    return render_template("shop/supermarket.html", stores=stores, selected=selected_store(), pwa_manifest="/supermarket/manifest.webmanifest")
-
-
-@bp.get("/supermarket/<code>")
-def supermarket_store(code):
-    store = Store.query.filter_by(code=code, is_active=True).first_or_404()
-    session["store_code"] = store.code
-    return redirect(url_for("shop.shop", store=store.code))
+    # Technical installation route; in standalone PWA mode it looks exactly
+    # like the customer shop and contains no "supermarket extension" wording.
+    store = selected_store()
+    products = catalogue_query(store).limit(120).all()
+    categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
+                  .order_by(Category.sort_order, Category.name).all()) if store else []
+    return render_template("shop/home.html", stores=active_stores(), store=store, products=products, categories=categories,
+                           pwa_manifest="/supermarket/manifest.webmanifest", installation_view=True)
 
 
 @bp.get("/supermarket/manifest.webmanifest")
 def supermarket_manifest():
     base = request.host_url.rstrip("/")
     return jsonify({
-        "name": "REAL MART Shopping",
+        "name": "REAL MART",
         "short_name": "REAL MART",
         "start_url": f"{base}/supermarket",
         "scope": f"{base}/supermarket",
         "display": "standalone",
-        "background_color": "#f7fbfd",
-        "theme_color": "#55b8dc",
-        "description": "Mobile shopping access for REAL MART marts.",
-        "icons": [{"src": f"{base}/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+        "background_color": "#f8fafb",
+        "theme_color": "#fff5e8",
+        "description": "REAL MART shopping app",
+        "icons": [{"src": f"{base}/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
     })
 
 
 @bp.get("/supermarket/sw.js")
 def supermarket_service_worker():
     from flask import Response
-    js = """const CACHE='real-mart-supermarket-v1';
-self.addEventListener('install',e=>self.skipWaiting());
-self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
-self.addEventListener('fetch',e=>{
-  const u=new URL(e.request.url);
-  if(u.origin!==location.origin||e.request.method!=='GET')return;
-  if(!u.pathname.startsWith('/supermarket'))return;
-  e.respondWith(fetch(e.request).catch(()=>new Response('Shopping app offline',{status:503,headers:{'Content-Type':'text/plain'}})));
-});
-"""
+    js = """const CACHE='real-mart-shop-v4';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET'||!u.pathname.startsWith('/supermarket'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Shop unavailable offline',{status:503}))))});\n"""
     return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/supermarket"})

@@ -478,3 +478,15 @@ class OfflineOperation(db.Model):
     status = db.Column(db.String(30), default="RECEIVED", nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
     processed_at = db.Column(db.DateTime(timezone=True))
+
+class Expense(db.Model):
+    __tablename__ = "expenses"
+    id = db.Column(db.String(36), primary_key=True, default=uid)
+    business_id = db.Column(db.String(36), db.ForeignKey("businesses.id"), nullable=False, index=True)
+    store_id = db.Column(db.String(36), db.ForeignKey("stores.id"), index=True)
+    category = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(240), nullable=False)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    incurred_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False, index=True)
+    created_by = db.Column(db.String(36), db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)

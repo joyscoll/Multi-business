@@ -1,12 +1,17 @@
-if ('serviceWorker' in navigator) {
-  const path = window.location.pathname;
-  if (path === '/supermarket' || path.startsWith('/supermarket/')) {
-    navigator.serviceWorker.register('/supermarket/sw.js', {scope:'/supermarket'}).catch(()=>{});
-  }
-}
-function getCart(){try{return JSON.parse(localStorage.getItem('rm_cart')||'[]')}catch{return[]}}
-function saveCart(c){localStorage.setItem('rm_cart',JSON.stringify(c))}
-function addToCart(id,name,price){const c=getCart();const i=c.find(x=>x.id===id);if(i)i.quantity++;else c.push({id,name,price:Number(price),quantity:1});saveCart(c);toast(name+' added to your basket.');updateCartCount();}
-function updateCartCount(){const n=getCart().reduce((a,x)=>a+x.quantity,0);document.querySelectorAll('[data-cart-count]').forEach(e=>e.textContent=n)}
-function toast(message){const t=document.createElement('div');t.className='toast';t.textContent=message;document.body.appendChild(t);setTimeout(()=>t.remove(),2400)}
-document.addEventListener('DOMContentLoaded',updateCartCount);
+(function(){
+  const KEY='real-mart-cart';
+  const read=()=>{try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return[]}};
+  const save=c=>localStorage.setItem(KEY,JSON.stringify(c));
+  const money=n=>'KES '+Number(n||0).toFixed(2);
+  window.addToCart=function(id,name,price){const c=read();const i=c.find(x=>x.id===id);if(i)i.qty+=1;else c.push({id,name,price:Number(price),qty:1});save(c);updateCounts();toast(name+' added');};
+  window.updateCounts=function(){document.querySelectorAll('[data-cart-count]').forEach(e=>e.textContent=read().reduce((s,x)=>s+x.qty,0));};
+  window.toast=function(msg){let t=document.querySelector('.toast');if(!t){t=document.createElement('div');t.className='toast';document.body.appendChild(t)}t.textContent=msg;t.classList.add('show');clearTimeout(window._toast);window._toast=setTimeout(()=>t.classList.remove('show'),1800)};
+  window.renderCartPage=function(){const wrap=document.getElementById('cartPage');if(!wrap)return;const c=read();let total=0;if(!c.length){wrap.innerHTML='<div class="empty-shop"><strong>Your basket is empty.</strong><a href="/shop">Find something to buy →</a></div>';document.getElementById('checkoutLink').classList.add('disabled');document.getElementById('cartGrandTotal').textContent='0.00';return;}wrap.innerHTML=c.map((x,i)=>{const line=x.price*x.qty;total+=line;return `<article class="cart-row"><div class="cart-row-img"></div><div class="cart-row-main"><strong>${escapeHtml(x.name)}</strong><span>${money(x.price)}</span></div><div class="cart-qty"><button onclick="cartQty(${i},-1)">−</button><b>${x.qty}</b><button onclick="cartQty(${i},1)">+</button></div><strong>${money(line)}</strong><button class="remove" onclick="cartRemove(${i})">×</button></article>`}).join('');document.getElementById('cartGrandTotal').textContent=total.toFixed(2);};
+  window.cartQty=function(i,d){const c=read();if(!c[i])return;c[i].qty+=d;if(c[i].qty<=0)c.splice(i,1);save(c);renderCartPage();updateCounts();};
+  window.cartRemove=function(i){const c=read();c.splice(i,1);save(c);renderCartPage();updateCounts();};
+  window.placeOrder=async function(){const c=read();if(!c.length)return toast('Basket is empty');const payload={store_code:new URLSearchParams(location.search).get('store')||window.REAL_MART_STORE||'',items:c.map(x=>({store_product_id:x.id,quantity:x.qty})),customer:{name:document.getElementById('custName').value.trim(),phone:document.getElementById('custPhone').value.trim(),email:document.getElementById('custEmail').value.trim()},delivery_address:document.getElementById('deliveryAddress').value.trim()};if(!payload.customer.name||!payload.customer.phone)return toast('Name and phone are required');const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)return toast(d.error||'Order could not be placed');save([]);location.href='/order/'+encodeURIComponent(d.order_number);};
+  function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+  updateCounts();renderCartPage();
+  if(document.getElementById('checkoutSummary')){const c=read();document.getElementById('checkoutSummary').innerHTML=c.map(x=>`<div class="summary-line"><span>${escapeHtml(x.name)} × ${x.qty}</span><b>${money(x.price*x.qty)}</b></div>`).join('')||'<span class="muted">No items.</span>';document.getElementById('checkoutTotal').textContent=c.reduce((s,x)=>s+x.price*x.qty,0).toFixed(2);}
+  if(location.pathname==='/supermarket'&&'serviceWorker' in navigator){navigator.serviceWorker.register('/supermarket/sw.js',{scope:'/supermarket'}).catch(()=>{});}
+})();
