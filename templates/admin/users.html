@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<h1>Users</h1><div class="table-wrap"><table><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th></tr>{% for user in users %}<tr><td>{{user.name}}</td><td>{{user.username}}</td><td>{{user.role.name}}</td><td>{{'Active' if user.is_active else 'Disabled'}}</td></tr>{% endfor %}</table></div>{% endblock %}
