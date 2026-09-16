@@ -40,7 +40,7 @@ def dashboard():
 def pos_manifest():
     base=request.host_url.rstrip("/")
     return jsonify({
-        "name":"REAL MART Till", "short_name":"Till", "start_url":f"{base}/merchant/on",
+        "name":"Denmart Till", "short_name":"Till", "start_url":f"{base}/merchant/on",
         "scope":f"{base}/merchant", "display":"standalone", "background_color":"#24180f",
         "theme_color":"#f29b38", "description":"Cashier till application.",
         "icons":[{"src":f"{base}/static/pwa/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}],

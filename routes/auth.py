@@ -24,7 +24,7 @@ def _login(target):
                 login_user(user, remember=False, fresh=True)
                 user.last_login_at = datetime.now(timezone.utc)
                 db.session.commit()
-                return redirect(request.args.get("next") or (ADMIN_PORTAL if target == "admin" else "/merchant/on"))
+                return redirect((request.args.get("next") or "").strip() if target == "admin" and request.args.get("next") else (ADMIN_PORTAL if target == "admin" else "/merchant/on"))
         else:
             flash("Invalid username or password.", "error")
     return render_template("auth/login.html", target=target,

@@ -1,4 +1,4 @@
-# REAL MART V8
+# Denmart V8
 
 Kenya-first supermarket platform with three focused workspaces sharing catalogue, stock, prices, orders and M-PESA payment state.
 

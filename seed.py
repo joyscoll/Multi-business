@@ -54,12 +54,15 @@ def seed_defaults():
     business = Business.query.first()
     if not business:
         business = Business(
-            name=os.getenv("BUSINESS_NAME", "REAL MART"),
+            name=os.getenv("BUSINESS_NAME", "Denmart"),
             currency=os.getenv("CURRENCY", "KES"),
             timezone=os.getenv("TIMEZONE", "Africa/Nairobi"),
         )
         db.session.add(business)
         db.session.flush()
+
+    # Denmart is the canonical customer-facing brand for this build.
+    business.name = os.getenv("BUSINESS_NAME", "Denmart").strip() or "Denmart"
 
     store = Store.query.filter_by(business_id=business.id).first()
     if not store:
@@ -103,7 +106,7 @@ def seed_defaults():
 
     catalog_version = SystemSetting.query.filter_by(business_id=business.id, key="catalog_seed_version").first()
     first_catalog_boot = catalog_version is None
-    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "ke-2026-09-16-v8")
+    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "denmart-2026-09-16-v9")
     if refresh_catalog_assets:
         for legacy in StoreProduct.query.filter_by(store_id=store.id).all():
             legacy.is_available = False
@@ -112,7 +115,7 @@ def seed_defaults():
         catalog_version = SystemSetting(
             business_id=business.id,
             key="catalog_seed_version",
-            value="ke-2026-09-16-v8",
+            value="denmart-2026-09-16-v9",
         )
         db.session.add(catalog_version)
 

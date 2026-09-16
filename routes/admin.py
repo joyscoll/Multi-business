@@ -140,11 +140,48 @@ def stores():
     return render_template("admin/stores.html", stores=Store.query.filter_by(business_id=business.id).order_by(Store.name).all())
 
 
-@bp.get(f"{ADMIN_BASE}/users")
+@bp.route(f"{ADMIN_BASE}/users", methods=["GET", "POST"])
 @admin_required("users.manage")
 def users():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        role_id = request.form.get("role_id", "").strip()
+        store_id = request.form.get("store_id", "").strip() or None
+        role = db.session.get(Role, role_id)
+        if not name or not username or len(password) < 8 or not role:
+            flash("Name, username, an 8+ character password and a valid role are required.", "error")
+        elif User.query.filter(db.func.lower(User.username) == username.lower()).first():
+            flash("That username is already in use.", "error")
+        elif store_id and not Store.query.filter_by(id=store_id, business_id=current_user.business_id).first():
+            flash("Select a valid mart.", "error")
+        else:
+            user = User(business_id=current_user.business_id, store_id=store_id, name=name,
+                        username=username, role_id=role.id, is_active=True)
+            user.set_password(password)
+            db.session.add(user); db.session.commit()
+            audit("USER_CREATED", "User", user.id, new_values={"username": username, "role": role.name, "store_id": store_id})
+            flash(f"{name} can now sign in to the assigned system.", "success")
+            return redirect(url_for("admin.users"))
     return render_template("admin/users.html", users=User.query.filter_by(business_id=current_user.business_id).order_by(User.name).all(),
                            roles=Role.query.order_by(Role.name).all(), stores=Store.query.filter_by(business_id=current_user.business_id).order_by(Store.name).all())
+
+
+@bp.post(f"{ADMIN_BASE}/users/<user_id>/toggle")
+@admin_required("users.manage")
+def toggle_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user or user.business_id != current_user.business_id:
+        return "Not found", 404
+    if user.id == current_user.id:
+        flash("The master administrator cannot disable their own account.", "error")
+        return redirect(url_for("admin.users"))
+    user.is_active = not user.is_active
+    db.session.commit()
+    audit("USER_STATUS_CHANGED", "User", user.id, new_values={"active": user.is_active})
+    flash(f"{user.name} is now {'active' if user.is_active else 'disabled'}.", "success")
+    return redirect(url_for("admin.users"))
 
 
 @bp.get(f"{ADMIN_BASE}/expenses")

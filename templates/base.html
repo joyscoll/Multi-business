@@ -4,6 +4,10 @@
 {% if pwa_manifest %}<link rel="manifest" href="{{pwa_manifest}}">{% elif not request.path.startswith("/control") %}<link rel="manifest" href="/shop/manifest.webmanifest">{% endif %}
 <link rel="stylesheet" href="{{url_for('static',filename='css/app.css')}}"><title>{{business_name}}{% if title %} · {{title}}{% endif %}</title></head>
 <body class="{% block body_class %}{% endblock %}">
-{% block chrome %}<header class="site-header"><a class="brand" href="/"><span class="brand-mark">RM</span><span><strong>{{business_name}}</strong><small>Everyday supermarket</small></span></a><form class="site-search" action="/shop" method="get"><span class="search-icon">⌕</span><input name="q" value="{{request.args.get('q','')}}" placeholder="Search milk, bread, sugar, yoghurt…"><button>Search</button></form><nav class="site-actions"><a href="/shop">Shop</a><a href="/cart">Basket <b data-cart-count>0</b></a></nav></header>{% endblock %}
+{% block chrome %}<header class="site-header">
+<a class="brand" href="/"><span class="brand-mark denmart-mark">DM</span><span><strong>Denmart</strong><small>Everyday essentials</small></span></a>
+<form class="site-search" action="/shop" method="get"><span class="search-icon">⌕</span><input name="q" value="{{request.args.get('q','')}}" placeholder="Search milk, bread, sugar, yoghurt…"><button>Search</button></form>
+<nav class="site-actions"><a href="/shop">Shop</a><a href="/cart">Basket <b data-cart-count>0</b></a></nav>
+</header>{% endblock %}
 <main class="page">{% with messages=get_flashed_messages(with_categories=true) %}{% for cat,msg in messages %}<div class="flash {{cat}}">{{msg}}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}<footer class="public-footer"><span>{{footer_text}}</span><span>KES · Local mart prices and availability</span></footer></main>
 <script src="{{url_for('static',filename='js/app.js')}}"></script>{% block scripts %}{% endblock %}</body></html>

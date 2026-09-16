@@ -8,7 +8,7 @@ if __name__ == "__main__":
         bootstrap_database()
         summary = database_summary()
         print(
-            "REAL MART database ready: "
+            "Denmart database ready: "
             f"dialect={summary['dialect']} stores={summary['store_count']} "
             f"business={summary['has_business']}"
         )

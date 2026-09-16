@@ -1,4 +1,4 @@
-# Real-Mart starter master catalogue: Kenyan supermarket-oriented products.
+# Denmart starter master catalogue: Kenyan supermarket-oriented products.
 # These are catalogue identities, not claims of current stock or current market prices.
 # Admins control availability/stock; they are not expected to build the catalogue from scratch.
 
