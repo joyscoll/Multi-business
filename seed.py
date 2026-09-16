@@ -3,7 +3,6 @@ import re
 import hashlib
 from decimal import Decimal
 
-from app import app
 from extensions import db
 from models import (
     Business, Store, Role, Permission, User, Category, Product, ProductAlias,
@@ -202,5 +201,7 @@ def seed_defaults():
 
 
 if __name__ == "__main__":
+    from app import create_app
+    app = create_app()
     with app.app_context():
         seed_defaults()
