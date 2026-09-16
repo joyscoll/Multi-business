@@ -1,15 +1,16 @@
 from decimal import Decimal, InvalidOperation
 import json
+from pathlib import Path
 from functools import wraps
-from flask import Blueprint, flash, redirect, render_template, request, url_for, Response
+from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session
 from flask_login import current_user, login_required
 from extensions import db
 from models import (Product, StoreProduct, PricingRule, PriceHistory, InventoryTransaction, User,
                     AuditLog, Sale, SaleItem, Order, Store, Business, Category, SystemError,
-                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission)
+                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, now)
 from services.audit import audit
-from services.export import export_business
-from services.crypto import encrypt
+from services.crypto import encrypt, decrypt
+from services.backup_restore import export_database_json, create_sqlite_snapshot, restore_database_json, restore_sqlite_snapshot
 
 bp = Blueprint("admin", __name__)
 ADMIN_BASE = "/control"
@@ -20,7 +21,7 @@ def admin_required(permission=None):
         @wraps(fn)
         @login_required
         def wrapped(*args, **kwargs):
-            if not current_user.is_authenticated or not current_user.role or current_user.role.name != "OWNER":
+            if session.get("portal") != "admin" or not current_user.is_authenticated or not current_user.role or current_user.role.name != "OWNER":
                 return "Forbidden", 403
             if permission and not current_user.has_permission(permission):
                 return "Forbidden", 403
@@ -223,17 +224,102 @@ def security():
 @bp.get(f"{ADMIN_BASE}/backups")
 @admin_required("backup.create")
 def backups():
-    latest = AuditLog.query.filter_by(business_id=current_user.business_id, action="BUSINESS_EXPORT").order_by(AuditLog.created_at.desc()).limit(25).all()
+    latest = AuditLog.query.filter_by(business_id=current_user.business_id, action="DATABASE_BACKUP_CREATED").order_by(AuditLog.created_at.desc()).limit(25).all()
     return render_template("admin/backups.html", latest=latest)
 
 
 @bp.get(f"{ADMIN_BASE}/export.json")
 @admin_required("backup.create")
 def export_json():
-    payload = export_business(current_user.business_id)
-    audit("BUSINESS_EXPORT", "Business", current_user.business_id, new_values={"format": "json"})
+    payload = export_database_json()
+    audit("DATABASE_BACKUP_CREATED", "Business", current_user.business_id, new_values={"format": "json"})
     return Response(json.dumps(payload, default=str), mimetype="application/json",
-                    headers={"Content-Disposition": "attachment; filename=real-mart-business-export.json"})
+                    headers={"Content-Disposition": "attachment; filename=denmart-backup.json"})
+
+
+@bp.get(f"{ADMIN_BASE}/export.sqlite")
+@admin_required("backup.create")
+def export_sqlite():
+    from tempfile import NamedTemporaryFile
+    with NamedTemporaryFile(suffix=".sqlite", delete=False) as fh:
+        path = fh.name
+    create_sqlite_snapshot(path)
+    data = Path(path).read_bytes()
+    try:
+        Path(path).unlink(missing_ok=True)
+    except Exception:
+        pass
+    audit("DATABASE_BACKUP_CREATED", "Business", current_user.business_id, new_values={"format": "sqlite"})
+    return Response(data, mimetype="application/vnd.sqlite3",
+                    headers={"Content-Disposition": "attachment; filename=denmart-backup.sqlite"})
+
+
+@bp.post(f"{ADMIN_BASE}/restore/json")
+@admin_required("backup.restore")
+def restore_json():
+    upload = request.files.get("backup_file")
+    if request.form.get("confirm") != "RESTORE" or not upload or not upload.filename.lower().endswith(".json"):
+        flash("Choose a Denmart JSON backup file.", "error")
+        return redirect(url_for("admin.backups"))
+    try:
+        payload = json.loads(upload.read().decode("utf-8"))
+        restore_database_json(payload)
+        from flask_login import logout_user
+        logout_user()
+        session.clear()
+        flash("JSON backup restored. Sign in again to continue.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"JSON restore failed: {exc}", "error")
+    return redirect(url_for("admin.backups"))
+
+
+@bp.post(f"{ADMIN_BASE}/restore/sqlite")
+@admin_required("backup.restore")
+def restore_sqlite():
+    upload = request.files.get("backup_file")
+    if request.form.get("confirm") != "RESTORE" or not upload or not upload.filename.lower().endswith((".sqlite", ".db")):
+        flash("Choose a Denmart SQLite backup file.", "error")
+        return redirect(url_for("admin.backups"))
+    from tempfile import NamedTemporaryFile
+    with NamedTemporaryFile(suffix=".sqlite", delete=False) as fh:
+        path = fh.name
+        upload.save(path)
+    try:
+        restore_sqlite_snapshot(path)
+        from flask_login import logout_user
+        logout_user()
+        session.clear()
+        flash("SQLite backup restored. Sign in again to continue.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"SQLite restore failed: {exc}", "error")
+    finally:
+        Path(path).unlink(missing_ok=True)
+    return redirect(url_for("admin.backups"))
+
+
+@bp.post(f"{ADMIN_BASE}/settings/test-daraja")
+@admin_required("reports.view")
+def test_daraja():
+    business = db.session.get(Business, current_user.business_id)
+    integration = PaymentIntegration.query.filter_by(business_id=business.id, provider="SAFARICOM").first()
+    if not integration:
+        flash("Save the Daraja credentials first.", "error")
+        return redirect(url_for("admin.settings"))
+    try:
+        from services.payments.daraja import DarajaProvider
+        provider = DarajaProvider(decrypt(integration.consumer_key_encrypted) or "", decrypt(integration.consumer_secret_encrypted) or "",
+                                   decrypt(integration.shortcode_encrypted) or "", decrypt(integration.passkey_encrypted) or "",
+                                   integration.environment or "sandbox", integration.callback_url or "")
+        provider.access_token()
+        integration.last_tested_at = now()
+        db.session.commit()
+        flash("Daraja credentials accepted by the selected environment.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"Daraja connection test failed: {exc}", "error")
+    return redirect(url_for("admin.settings"))
 
 
 @bp.get(f"{ADMIN_BASE}/audit")
@@ -263,12 +349,20 @@ def settings():
             integration.environment = request.form.get("environment", "sandbox")
             integration.callback_url = request.form.get("callback_url", "").strip() or None
             integration.is_active = request.form.get("mpesa_active") == "1"
+            extra = {"transaction_type": request.form.get("transaction_type", "CustomerPayBillOnline")}
             for field, form_name in [("consumer_key_encrypted","consumer_key"),("consumer_secret_encrypted","consumer_secret"),("shortcode_encrypted","shortcode"),("passkey_encrypted","passkey")]:
                 value = request.form.get(form_name, "").strip()
                 if value: setattr(integration, field, encrypt(value))
+            integration.other_credentials_encrypted = encrypt(json.dumps(extra))
         db.session.commit(); flash("Settings saved.", "success")
     setting = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first()
     callback = integration.callback_url if integration else ""
+    transaction_type = "CustomerPayBillOnline"
+    if integration and integration.other_credentials_encrypted:
+        try:
+            transaction_type = json.loads(decrypt(integration.other_credentials_encrypted) or "{}").get("transaction_type", transaction_type)
+        except Exception:
+            pass
     return render_template("admin/settings.html", business=business, integration=integration,
                            footer_text=setting.value if setting else "All rights reserved · Denmart Merchants",
-                           callback_url=callback)
+                           callback_url=callback, transaction_type=transaction_type)

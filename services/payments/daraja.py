@@ -14,12 +14,12 @@ class DarajaProvider(PaymentProvider):
         r = self.session.get(f"{self.base}/oauth/v1/generate?grant_type=client_credentials", auth=(self.consumer_key, self.consumer_secret), timeout=30)
         r.raise_for_status(); return r.json()["access_token"]
 
-    def initiate_payment(self, *, amount, phone_number, account_reference, transaction_desc, **_):
+    def initiate_payment(self, *, amount, phone_number, account_reference, transaction_desc, transaction_type="CustomerPayBillOnline", **_):
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         password = base64.b64encode(f"{self.shortcode}{self.passkey}{timestamp}".encode()).decode()
         token = self.access_token()
         payload = {"BusinessShortCode": self.shortcode, "Password": password, "Timestamp": timestamp,
-                   "TransactionType": "CustomerPayBillOnline", "Amount": int(round(float(amount))),
+                   "TransactionType": transaction_type, "Amount": int(round(float(amount))),
                    "PartyA": phone_number, "PartyB": self.shortcode, "PhoneNumber": phone_number,
                    "CallBackURL": self.callback_url, "AccountReference": account_reference,
                    "TransactionDesc": transaction_desc}

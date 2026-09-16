@@ -105,11 +105,18 @@ def configured_daraja():
         integration = PaymentIntegration.query.filter_by(provider="SAFARICOM", is_active=True).first()
     if integration:
         try:
-            return DarajaProvider(
+            provider = DarajaProvider(
                 decrypt(integration.consumer_key_encrypted) or "", decrypt(integration.consumer_secret_encrypted) or "",
                 decrypt(integration.shortcode_encrypted) or "", decrypt(integration.passkey_encrypted) or "",
                 integration.environment or "sandbox", integration.callback_url or current_app.config["DARAJA_CALLBACK_URL"]
             )
+            try:
+                import json
+                extra = json.loads(decrypt(integration.other_credentials_encrypted) or "{}") if integration.other_credentials_encrypted else {}
+                provider.transaction_type = extra.get("transaction_type", "CustomerPayBillOnline")
+            except Exception:
+                provider.transaction_type = "CustomerPayBillOnline"
+            return provider
         except Exception:
             pass
     return DarajaProvider(current_app.config["DARAJA_CONSUMER_KEY"], current_app.config["DARAJA_CONSUMER_SECRET"],
@@ -136,7 +143,7 @@ def mpesa_initiate():
     payment=Payment(business_id=entity.business_id,store_id=entity.store_id,sale_id=sale_id,order_id=order_id,provider="SAFARICOM",method="MPESA",amount=amount,currency=current_app.config["CURRENCY"],status="PENDING",phone_number=phone)
     db.session.add(payment);db.session.flush()
     provider=configured_daraja()
-    try: response=provider.initiate_payment(amount=amount,phone_number=phone,account_reference=(entity.receipt_number if sale_id else entity.order_number),transaction_desc="Retail purchase")
+    try: response=provider.initiate_payment(amount=amount,phone_number=phone,account_reference=(entity.receipt_number if sale_id else entity.order_number),transaction_desc="Retail purchase",transaction_type=getattr(provider, "transaction_type", "CustomerPayBillOnline"))
     except Exception:
         db.session.rollback(); return jsonify(error="payment_provider_unavailable"),502
     payment.merchant_request_id=response.get("MerchantRequestID");payment.checkout_request_id=response.get("CheckoutRequestID");payment.external_reference=response.get("CustomerMessage");db.session.commit()

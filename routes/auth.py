@@ -9,7 +9,7 @@ ADMIN_PORTAL = "/control"
 
 
 def _login(target):
-    if current_user.is_authenticated:
+    if current_user.is_authenticated and session.get("portal") == target:
         return redirect(ADMIN_PORTAL if target == "admin" else "/merchant/on")
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -22,6 +22,7 @@ def _login(target):
                 flash("This account is not assigned to a till.", "error")
             else:
                 login_user(user, remember=False, fresh=True)
+                session["portal"] = target
                 user.last_login_at = datetime.now(timezone.utc)
                 db.session.commit()
                 return redirect(ADMIN_PORTAL if target == "admin" else "/merchant/on")
@@ -33,14 +34,14 @@ def _login(target):
 
 @bp.route("/merchant", methods=["GET", "POST"])
 def pos_login():
-    if current_user.is_authenticated and current_user.has_permission("sales.create"):
+    if current_user.is_authenticated and session.get("portal") == "pos" and current_user.has_permission("sales.create"):
         return redirect("/merchant/on")
     return _login("pos")
 
 
 @bp.route(ADMIN_PORTAL, methods=["GET", "POST"])
 def hidden_admin_portal():
-    if current_user.is_authenticated:
+    if current_user.is_authenticated and session.get("portal") == "admin":
         from routes.admin import _dashboard
         return _dashboard()
     return _login("admin")

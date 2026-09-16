@@ -13,7 +13,8 @@ def cashier_required(fn):
     @wraps(fn)
     @login_required
     def wrapped(*args, **kwargs):
-        if not current_user.has_permission("sales.create") or not current_user.store_id:
+        from flask import session
+        if session.get("portal") != "pos" or not current_user.has_permission("sales.create") or not current_user.store_id:
             return jsonify(error="forbidden"), 403
         return fn(*args, **kwargs)
     return wrapped
@@ -21,7 +22,8 @@ def cashier_required(fn):
 
 @bp.get("/merchant/on")
 def dashboard_entry():
-    if not current_user.is_authenticated:
+    from flask import session
+    if not current_user.is_authenticated or session.get("portal") != "pos":
         return redirect("/merchant?next=/merchant/on")
     if not current_user.has_permission("sales.create") or not current_user.store_id:
         return "Forbidden", 403
