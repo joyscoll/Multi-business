@@ -19,8 +19,19 @@ def _login(target):
             if target == "admin" and not (user.role and user.role.name == "OWNER"):
                 flash("Control-centre access is reserved for the master administrator.", "error")
             elif target == "pos" and not user.has_permission("sales.create"):
-                flash("This account is not assigned to a till.", "error")
+                flash("This account is not enabled for merchant sales.", "error")
             else:
+                if target == "pos" and not user.store_id:
+                    from models import Store
+                    fallback_store = (Store.query.filter_by(business_id=user.business_id, is_active=True)
+                                      .order_by(Store.created_at).first())
+                    if fallback_store:
+                        user.store_id = fallback_store.id
+                        db.session.flush()
+                    else:
+                        flash("No active mart is configured yet. Ask the administrator to add a mart.", "error")
+                        return render_template("auth/login.html", target=target,
+                                               pwa_manifest="/merchant/manifest.webmanifest")
                 login_user(user, remember=False, fresh=True)
                 session["portal"] = target
                 user.last_login_at = datetime.now(timezone.utc)
