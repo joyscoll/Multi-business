@@ -1,5 +1,8 @@
 from decimal import Decimal, InvalidOperation
 import json
+import base64
+from io import BytesIO
+from PIL import Image
 from pathlib import Path
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session
@@ -517,6 +520,29 @@ def settings():
     if request.method == "POST":
         business.name = request.form.get("business_name", business.name).strip() or business.name
         footer = request.form.get("footer_text", "All rights reserved · Denmart Merchants").strip()
+        logo_file = request.files.get("business_logo")
+        if logo_file and logo_file.filename:
+            raw_logo = logo_file.read(2 * 1024 * 1024 + 1)
+            try:
+                if len(raw_logo) > 2 * 1024 * 1024:
+                    raise ValueError("Logo is larger than 2 MB.")
+                image = Image.open(BytesIO(raw_logo))
+                if image.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
+                    raise ValueError("Use a PNG, JPG, WEBP or GIF logo.")
+                image = image.convert("RGBA")
+                image.thumbnail((768, 768), Image.Resampling.LANCZOS)
+                out = BytesIO()
+                image.save(out, format="PNG", optimize=True)
+                encoded = base64.b64encode(out.getvalue()).decode("ascii")
+                if len(encoded) > 1_500_000:
+                    raise ValueError("Logo is still too large after optimization; use a smaller image.")
+                business.logo_url = f"data:image/png;base64,{encoded}"
+                flash("Business logo updated. The same logo will be used for the PWA app icon.", "success")
+            except Exception as exc:
+                flash(str(exc), "error")
+        if request.form.get("remove_logo") == "1":
+            business.logo_url = None
+            flash("Business logo removed; the default Denmart app icon will be used.", "success")
         setting = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first()
         if not setting:
             setting = SystemSetting(business_id=business.id, key="footer_text", value=footer); db.session.add(setting)

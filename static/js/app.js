@@ -38,6 +38,57 @@
 
 
   function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+
+
+  // PWA install experience: use the browser's real install prompt when available.
+  const isStandalone = () => window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+  const installPrompt = document.getElementById('pwaInstallPrompt');
+  const installButton = document.getElementById('pwaInstallButton');
+  const installLink = document.getElementById('pwaInstallLink');
+  const installDismiss = document.getElementById('pwaInstallDismiss');
+  let deferredInstallPrompt = null;
+  if (isStandalone()) { document.documentElement.classList.add('pwa-standalone'); document.body.classList.add('pwa-standalone'); }
+  const hideInstallUi = () => { if (installPrompt) installPrompt.hidden = true; if (installLink) installLink.hidden = true; };
+  const showInstallUi = () => { if (!isStandalone()) { if (installPrompt) installPrompt.hidden = false; if (installLink) installLink.hidden = false; } };
+  window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstallPrompt = event; showInstallUi(); });
+  window.addEventListener('appinstalled', () => { deferredInstallPrompt = null; hideInstallUi(); toast('Denmart was installed as an app'); });
+  const startInstall = async () => {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice.catch(() => ({outcome:'dismissed'}));
+      if (choice.outcome === 'accepted') hideInstallUi();
+      deferredInstallPrompt = null;
+      return;
+    }
+    if (isIos && !isStandalone()) {
+      toast('On iPhone/iPad: tap Share, then Add to Home Screen');
+      return;
+    }
+    toast('Use your browser menu and choose Install app or Add to Home Screen.');
+  };
+  installButton?.addEventListener('click', startInstall);
+  installLink?.addEventListener('click', startInstall);
+  installDismiss?.addEventListener('click', () => { if (installPrompt) installPrompt.hidden = true; });
+  if (isIos && !isStandalone() && installPrompt && !sessionStorage.getItem('denmart-install-dismissed')) {
+    setTimeout(() => { installPrompt.hidden = false; installButton.textContent = 'How to install'; }, 4500);
+  }
+  installDismiss?.addEventListener('click', () => sessionStorage.setItem('denmart-install-dismissed', '1'));
+
+  // Installed storefronts should feel like apps rather than pull-to-refresh web pages.
+  if (isStandalone()) {
+    let touchStartY = 0;
+    document.addEventListener('touchstart', e => { if (e.touches.length === 1) touchStartY = e.touches[0].clientY; }, {passive:true});
+    document.addEventListener('touchmove', e => {
+      if (e.touches.length !== 1 || window.scrollY > 0) return;
+      const pullingDown = e.touches[0].clientY - touchStartY > 8;
+      if (pullingDown) e.preventDefault();
+    }, {passive:false});
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready.then(reg => { if (reg.update) reg.update().catch(() => {}); }).catch(() => {});
+  }
+
   updateCounts();renderCartPage();
   if(document.getElementById('checkoutSummary')){const c=read();document.getElementById('checkoutSummary').innerHTML=c.map(x=>`<div class="summary-line"><span>${escapeHtml(x.name)} × ${x.qty}</span><b>${money(x.price*x.qty)}</b></div>`).join('')||'<span class="muted">No items.</span>';document.getElementById('checkoutTotal').textContent=c.reduce((s,x)=>s+x.price*x.qty,0).toFixed(2);}
   if(!location.pathname.startsWith('/control')&&!location.pathname.startsWith('/merchant')&&'serviceWorker' in navigator){navigator.serviceWorker.register('/shop/sw.js',{scope:'/'}).catch(()=>{});}

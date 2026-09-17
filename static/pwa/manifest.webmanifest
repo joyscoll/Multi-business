@@ -1,1 +1,20 @@
-{"name":"Denmart Shopping","short_name":"Denmart","start_url":"/","scope":"/","display":"standalone","background_color":"#f7fbfd","theme_color":"#55b8dc","description":"Online shopping site","icons":[{"src":"/static/pwa/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
+{
+  "id": "/",
+  "name": "Denmart",
+  "short_name": "Denmart",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "background_color": "#f7fafb",
+  "theme_color": "#f57c00",
+  "description": "Denmart online supermarket",
+  "orientation": "any",
+  "categories": ["shopping", "food", "business"],
+  "lang": "en-KE",
+  "prefer_related_applications": false,
+  "icons": [
+    {"src": "/shop/app-icon/192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/shop/app-icon/512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

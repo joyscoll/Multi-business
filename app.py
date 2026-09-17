@@ -54,8 +54,15 @@ def create_app():
     @app.context_processor
     def inject_globals():
         business = Business.query.first()
-        footer = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first().value if business and SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first() else "All rights reserved · Denmart Merchants"
-        return {"business_name": business.name if business else "Denmart", "currency": app.config["CURRENCY"], "footer_text": footer, "title": None}
+        footer_setting = (SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first() if business else None)
+        footer = footer_setting.value if footer_setting else "All rights reserved · Denmart Merchants"
+        return {
+            "business_name": business.name if business else "Denmart",
+            "business_logo": business.logo_url if business else "",
+            "currency": app.config["CURRENCY"],
+            "footer_text": footer,
+            "title": None,
+        }
 
     @app.get("/healthz")
     def healthz():

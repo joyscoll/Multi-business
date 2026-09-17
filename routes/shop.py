@@ -1,7 +1,10 @@
 from io import BytesIO
+import base64
+from PIL import Image, ImageDraw, ImageFont
 from flask import Blueprint, render_template, request, session, send_file, jsonify, Response
 from extensions import db
-from models import Product, Store, StoreProduct, Category, SystemSetting
+from models import Product, Store, StoreProduct, Category, SystemSetting, ProductAlias, Business
+from services.search import forgiving_rank
 
 bp = Blueprint("shop", __name__)
 
@@ -33,11 +36,15 @@ def catalogue_query(store=None, q="", category=""):
         query = query.filter(StoreProduct.store_id == store.id)
     if category:
         query = query.filter(Product.category_id == category)
-    if q:
-        like = f"%{q}%"
-        query = query.filter((Product.name.ilike(like)) | (Product.brand.ilike(like)) |
-                             (Product.search_keywords.ilike(like)) | (Product.barcode.ilike(like)))
-    return query.order_by(Product.name)
+    rows = query.order_by(Product.name).limit(2000).all()
+    if not q:
+        return rows
+    product_ids = [row.product_id for row in rows]
+    aliases_by_product = {}
+    if product_ids:
+        for alias in ProductAlias.query.filter(ProductAlias.product_id.in_(product_ids)).all():
+            aliases_by_product.setdefault(alias.product_id, []).append(alias.alias)
+    return forgiving_rank(rows, q, aliases_by_product=aliases_by_product, limit=300)
 
 
 @bp.get("/")
@@ -45,7 +52,7 @@ def home():
     store = selected_store()
     categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
                   .order_by(Category.sort_order, Category.name).all()) if store else []
-    rows = catalogue_query(store).limit(600).all() if store else []
+    rows = catalogue_query(store)[:600] if store else []
     priority = [
         "sugar", "fresh milk", "yoghurt", "bread", "maize meal", "rice", "cooking oil",
         "eggs", "tea", "coffee", "water", "tissue", "toilet", "washing", "soap", "biscuits",
@@ -67,7 +74,7 @@ def shop():
     q = request.args.get("q", "").strip()
     category = request.args.get("category", "").strip()
     store = selected_store()
-    products = catalogue_query(store, q=q, category=category).limit(300).all()
+    products = catalogue_query(store, q=q, category=category)[:300]
     categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
                   .order_by(Category.sort_order, Category.name).all()) if store else []
     return render_template("shop/shop.html", products=products, q=q, store=store, stores=active_stores(), categories=categories)
@@ -115,22 +122,113 @@ def app_qr():
 @bp.get("/shop/manifest.webmanifest")
 def shop_manifest():
     base = request.host_url.rstrip("/")
+    business = Business.query.order_by(Business.created_at).first()
+    name = business.name if business else "Denmart"
     return jsonify({
-        "name": "Denmart",
-        "short_name": "Denmart",
+        "id": "/",
+        "name": name,
+        "short_name": name[:12] or "Denmart",
         "start_url": f"{base}/",
         "scope": f"{base}/",
         "display": "standalone",
+        "display_override": ["standalone", "browser"],
         "background_color": "#f7fafb",
         "theme_color": "#f57c00",
-        "description": "Denmart online supermarket",
-        "icons": [{"src": f"{base}/static/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
+        "description": f"{name} online supermarket",
+        "orientation": "any",
+        "categories": ["shopping", "food", "business"],
+        "lang": "en-KE",
+        "dir": "ltr",
+        "prefer_related_applications": False,
+        "icons": [
+            {"src": f"{base}/shop/app-icon/192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": f"{base}/shop/app-icon/512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+        "shortcuts": [
+            {"name": "Shop", "short_name": "Shop", "url": f"{base}/shop", "icons": [{"src": f"{base}/shop/app-icon/192.png", "sizes": "192x192", "type": "image/png"}]},
+            {"name": "Basket", "short_name": "Basket", "url": f"{base}/cart", "icons": [{"src": f"{base}/shop/app-icon/192.png", "sizes": "192x192", "type": "image/png"}]},
+        ],
     })
+
+
+def _icon_bytes(size):
+    business = Business.query.order_by(Business.created_at).first()
+    logo_url = (business.logo_url or "").strip() if business else ""
+    canvas = Image.new("RGBA", (size, size), (245, 124, 0, 255))
+    if logo_url.startswith("data:image/") and "," in logo_url:
+        try:
+            raw = base64.b64decode(logo_url.split(",", 1)[1])
+            src = Image.open(BytesIO(raw)).convert("RGBA")
+            src.thumbnail((int(size * 0.72), int(size * 0.72)), Image.Resampling.LANCZOS)
+            canvas.alpha_composite(src, ((size - src.width) // 2, (size - src.height) // 2))
+        except Exception:
+            pass
+    else:
+        pad = int(size * 0.14)
+        draw = ImageDraw.Draw(canvas)
+        draw.rounded_rectangle((pad, pad, size - pad, size - pad), radius=int(size * .18), fill=(255,255,255,255))
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", int(size * .30))
+        except Exception:
+            font = ImageFont.load_default()
+        text = "DM"
+        bbox = draw.textbbox((0,0), text, font=font)
+        draw.text(((size-(bbox[2]-bbox[0]))/2, (size-(bbox[3]-bbox[1]))/2-int(size*.03)), text, fill=(25,118,74,255), font=font)
+    out = BytesIO()
+    canvas.convert("RGB").save(out, format="PNG", optimize=True)
+    out.seek(0)
+    return out
+
+
+@bp.get("/shop/app-icon/<int:size>.png")
+def shop_app_icon(size):
+    if size not in {192, 512}:
+        return ("", 404)
+    return send_file(_icon_bytes(size), mimetype="image/png", max_age=300)
 
 
 @bp.get("/shop/sw.js")
 def shop_service_worker():
-    js = """const CACHE='denmart-public-v13';\nself.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));\nself.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\nself.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==location.origin||e.request.method!=='GET')return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||new Response('Denmart is temporarily offline',{status:503}))));});\n"""
-    return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/"})
-
-
+    js = '''const CACHE_VERSION = "denmart-public-v15-pwa2";
+const STATIC_CACHE = `${CACHE_VERSION}-static`;
+const PAGE_CACHE = `${CACHE_VERSION}-pages`;
+const STATIC_ASSETS = ["/static/css/app.css","/static/js/app.js","/shop/manifest.webmanifest","/shop/app-icon/192.png","/shop/app-icon/512.png"];
+self.addEventListener("install", event => {
+  event.waitUntil(caches.open(STATIC_CACHE).then(cache => cache.addAll(STATIC_ASSETS)).then(() => self.skipWaiting()));
+});
+self.addEventListener("activate", event => {
+  event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => !k.startsWith(CACHE_VERSION)).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+});
+function bypass(request, url) {
+  return request.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/control") || url.pathname.startsWith("/merchant") || url.pathname.startsWith("/order/") || url.pathname.startsWith("/login") || url.pathname.startsWith("/logout");
+}
+self.addEventListener("fetch", event => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (bypass(request, url)) return;
+  if (url.pathname.endsWith("manifest.webmanifest") || url.pathname.includes("/shop/app-icon/")) {
+    event.respondWith(fetch(request).then(response => {
+      if (response.ok) caches.open(STATIC_CACHE).then(c => c.put(request, response.clone()));
+      return response;
+    }).catch(() => caches.match(request)));
+    return;
+  }
+  if (request.destination === "style" || request.destination === "script" || request.destination === "image") {
+    event.respondWith(caches.match(request).then(cached => {
+      const update = fetch(request).then(response => {
+        if (response.ok) caches.open(STATIC_CACHE).then(c => c.put(request, response.clone()));
+        return response;
+      }).catch(() => cached);
+      return cached || update;
+    }));
+    return;
+  }
+  if (request.mode === "navigate") {
+    event.respondWith(fetch(request).then(response => {
+      if (response.ok && (url.pathname === "/" || url.pathname.startsWith("/shop") || url.pathname.startsWith("/product/") || url.pathname === "/cart")) caches.open(PAGE_CACHE).then(c => c.put(request, response.clone()));
+      return response;
+    }).catch(() => caches.match(request).then(cached => cached || caches.match("/")).then(response => response || new Response("Denmart is temporarily offline", {status:503, headers:{"Content-Type":"text/plain"}}))));
+  }
+});
+'''
+    return Response(js, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})

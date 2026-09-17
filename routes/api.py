@@ -3,7 +3,8 @@ import re
 from flask import Blueprint, current_app, jsonify, request, session
 from flask_login import current_user, login_required
 from extensions import csrf, db
-from models import Product, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business, PaymentIntegration, SystemSetting
+from models import Product, ProductAlias, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business, PaymentIntegration, SystemSetting
+from services.search import forgiving_rank
 from services.payments.daraja import DarajaProvider
 from services.crypto import decrypt
 
@@ -25,10 +26,17 @@ def product_search():
     q = request.args.get("q", "").strip(); store_id = request.args.get("store_id")
     query = StoreProduct.query.join(Product).filter(StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True), StoreProduct.stock_quantity > StoreProduct.reserved_quantity, Product.status == "ACTIVE")
     if store_id: query = query.filter(StoreProduct.store_id == store_id)
+    rows = query.order_by(Product.name).limit(2000).all()
     if q:
-        like = f"%{q}%"
-        query = query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.sku.ilike(like)) | (Product.brand.ilike(like)) | (Product.search_keywords.ilike(like)))
-    return jsonify(items=[safe_product_payload(r) for r in query.order_by(Product.name).limit(60).all()])
+        aliases_by_product = {}
+        ids = [r.product_id for r in rows]
+        if ids:
+            for alias in ProductAlias.query.filter(ProductAlias.product_id.in_(ids)).all():
+                aliases_by_product.setdefault(alias.product_id, []).append(alias.alias)
+        rows = forgiving_rank(rows, q, aliases_by_product=aliases_by_product, limit=60)
+    else:
+        rows = rows[:60]
+    return jsonify(items=[safe_product_payload(r) for r in rows])
 
 
 def cashier_api(fn):
@@ -48,10 +56,17 @@ def cashier_api(fn):
 def pos_product_search():
     q = request.args.get("q", "").strip()
     query = StoreProduct.query.join(Product).filter(StoreProduct.is_available.is_(True), StoreProduct.store_id == current_user.store_id, StoreProduct.available_pos.is_(True), Product.status == "ACTIVE")
+    rows = query.order_by(Product.name).limit(2000).all()
     if q:
-        like = f"%{q}%"
-        query = query.filter((Product.name.ilike(like)) | (Product.barcode.ilike(like)) | (Product.sku.ilike(like)) | (Product.brand.ilike(like)) | (Product.search_keywords.ilike(like)))
-    return jsonify(items=[safe_product_payload(r, include_stock=True) for r in query.order_by(Product.name).limit(50).all()])
+        aliases_by_product = {}
+        ids = [r.product_id for r in rows]
+        if ids:
+            for alias in ProductAlias.query.filter(ProductAlias.product_id.in_(ids)).all():
+                aliases_by_product.setdefault(alias.product_id, []).append(alias.alias)
+        rows = forgiving_rank(rows, q, aliases_by_product=aliases_by_product, limit=50)
+    else:
+        rows = rows[:50]
+    return jsonify(items=[safe_product_payload(r, include_stock=True) for r in rows])
 
 
 @bp.get("/pos/catalogue/cache")

@@ -46,8 +46,11 @@ async function searchPOS(){
     $('#productResults').innerHTML=rows.map(productButton).join('')||`<div class="pos-empty">No matching item${navigator.onLine?'':' in the offline catalogue'}.</div>`;
   }catch(e){$('#productResults').innerHTML='<div class="pos-empty">Terminal could not complete that lookup.</div>';beep(false)}
 }
+function normalizeSearchText(value){return String(value||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
+function editDistance(a,b){a=normalizeSearchText(a);b=normalizeSearchText(b);const prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let cur=[i];for(let j=1;j<=b.length;j++)cur[j]=Math.min(cur[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));for(let j=0;j<=b.length;j++)prev[j]=cur[j]}return prev[b.length]}
+function localFuzzySearch(rows,q,limit=50){const needle=normalizeSearchText(q);if(!needle)return rows.slice(0,limit);return rows.map(x=>{const hay=normalizeSearchText(`${x.name} ${x.barcode||''} ${x.sku||''}`);const name=normalizeSearchText(x.name);const exact=hay.includes(needle)?100:0;const ratio=1-(editDistance(needle,name)/Math.max(needle.length,name.length,1));return {x,score:Math.max(exact,ratio*100)}}).filter(v=>v.score>=58).sort((a,b)=>b.score-a.score||a.x.name.localeCompare(b.x.name)).slice(0,limit).map(v=>v.x)}
 async function searchText(q){
-  if(!navigator.onLine){const rows=(await idbAll('catalogue')).filter(x=>`${x.name} ${x.barcode||''} ${x.sku||''}`.toLowerCase().includes(q.toLowerCase())).slice(0,50);return rows}
+  if(!navigator.onLine){return localFuzzySearch(await idbAll('catalogue'),q,50)}
   const r=await fetch('/api/pos/products/search?q='+encodeURIComponent(q),{credentials:'same-origin'});const d=await r.json();await cacheProducts(d.items||[]);return d.items||[];
 }
 window.addPOS=function(id,name,price,stock){const x=cart.find(i=>i.id===id);if(x)x.qty++;else cart.push({id,name,price:Number(price),qty:1,stock:Number(stock)});renderCart();$('#posSearch').select();beep(true)};
