@@ -239,6 +239,47 @@ def mpesa_initiate():
     return jsonify(ok=True, payment_id=payment.id, status="PENDING", message="Payment prompt sent")
 
 
+@csrf.exempt
+@bp.post("/payments/till/submit")
+def till_payment_submit():
+    data = request.get_json(silent=True) or {}
+    order_id = data.get("order_id")
+    reference = re.sub(r"[^A-Za-z0-9]", "", str(data.get("mpesa_reference") or "").strip()).upper()
+    phone = normalize_ke_phone(data.get("phone_number"))
+    if not order_id or not reference or len(reference) < 6 or len(reference) > 20 or not phone:
+        return jsonify(error="order_reference_and_valid_phone_required"), 400
+    order = db.session.get(Order, order_id)
+    if not order:
+        return jsonify(error="order_not_found"), 404
+    if order.customer_id:
+        customer = db.session.get(Customer, order.customer_id)
+        if customer and normalize_ke_phone(customer.phone) and normalize_ke_phone(customer.phone) != phone:
+            return jsonify(error="phone_does_not_match_order"), 403
+    if order.payment_status == "PAID":
+        return jsonify(error="already_paid"), 409
+    till_setting = SystemSetting.query.filter_by(business_id=order.business_id, key="mpesa_till_number").first()
+    till_number = str(till_setting.value or "").strip() if till_setting else ""
+    if not till_number:
+        return jsonify(error="mpesa_till_not_configured"), 503
+    existing = (Payment.query.filter_by(order_id=order.id, method="MPESA_TILL")
+                .order_by(Payment.created_at.desc()).first())
+    if existing and existing.status == "PENDING_APPROVAL":
+        return jsonify(ok=True, payment_id=existing.id, status=existing.status, message="Payment is already awaiting approval")
+    payment = Payment(
+        business_id=order.business_id, store_id=order.store_id, order_id=order.id,
+        provider="SAFARICOM", method="MPESA_TILL", amount=order.total,
+        currency=current_app.config["CURRENCY"], status="PENDING_APPROVAL",
+        external_reference=reference, phone_number=phone,
+    )
+    db.session.add(payment)
+    order.payment_status = "PENDING_APPROVAL"
+    order.status = "PENDING"
+    db.session.commit()
+    return jsonify(ok=True, payment_id=payment.id, status=payment.status,
+                   order_number=order.order_number, till_number=till_number,
+                   message="Payment submitted and awaiting approval")
+
+
 @bp.get("/payments/<payment_id>/status")
 def payment_status(payment_id):
     payment = db.session.get(Payment, payment_id)
@@ -250,6 +291,7 @@ def payment_status(payment_id):
         order = db.session.get(Order, payment.order_id)
         data["order_status"] = order.status if order else None
         data["payment_status"] = order.payment_status if order else None
+        data["fulfillment_status"] = order.fulfillment_status if order else None
     elif payment.sale_id:
         sale = db.session.get(Sale, payment.sale_id)
         data["payment_status"] = sale.payment_status if sale else None

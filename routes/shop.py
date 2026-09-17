@@ -1,7 +1,7 @@
 from io import BytesIO
 from flask import Blueprint, render_template, request, session, send_file, jsonify, Response
 from extensions import db
-from models import Product, Store, StoreProduct, Category
+from models import Product, Store, StoreProduct, Category, SystemSetting
 
 bp = Blueprint("shop", __name__)
 
@@ -89,7 +89,10 @@ def cart():
 
 @bp.get("/checkout")
 def checkout():
-    return render_template("shop/checkout.html", store=selected_store())
+    store = selected_store()
+    till_setting = SystemSetting.query.filter_by(business_id=store.business_id, key="mpesa_till_number").first() if store else None
+    till_number = str(till_setting.value or "").strip() if till_setting else ""
+    return render_template("shop/checkout.html", store=store, till_number=till_number)
 
 
 @bp.get("/order/<order_number>")

@@ -1,18 +1,18 @@
-{% extends 'base.html' %}{% block content %}<section class="confirmation" data-payment="{{request.args.get('payment','')}}"><div class="confirm-mark" id="paymentMark">⌛</div><div class="eyebrow">ORDER {{order.order_number}}</div><h1 id="paymentTitle">Payment prompt sent.</h1><p id="paymentMessage">Check your phone and enter your M-PESA PIN. This page will update automatically when Safaricom confirms payment.</p><div class="confirmation-total">{{currency}} {{'%.2f'|format(order.total|float)}}</div><div class="confirmation-actions"><a href="/shop" class="big-add">Keep shopping</a><a href="/" class="basket-link">Back to store</a></div></section>{% endblock %}{% block scripts %}<script>
+{% extends 'base.html' %}{% block content %}<section class="confirmation" data-payment="{{request.args.get('payment','')}}" data-payment-status="{{order.payment_status}}" data-fulfillment="{{order.fulfillment_status}}"><div class="confirm-mark" id="paymentMark">{% if order.payment_status=='PAID' %}✓{% elif order.payment_status=='PENDING_APPROVAL' %}⌛{% else %}⌛{% endif %}</div><div class="eyebrow">ORDER {{order.order_number}}</div><h1 id="paymentTitle">{% if order.payment_status=='PAID' %}Payment confirmed.{% elif order.payment_status=='PENDING_APPROVAL' %}Payment pending approval.{% else %}Payment pending.{% endif %}</h1><p id="paymentMessage">{% if order.payment_status=='PENDING_APPROVAL' %}Your M-PESA Till payment was submitted. Denmart will confirm it and update this page.{% elif order.payment_status=='PAID' %}Payment confirmed. Your order is now in the fulfilment queue.{% else %}Your order has been received. Payment status will update here when confirmed.{% endif %}</p><div class="order-status-box"><div><span>PAYMENT</span><strong id="paymentStatusLabel">{{order.payment_status.replace('_',' ').title()}}</strong></div><div><span>FULFILMENT</span><strong id="fulfillmentStatusLabel">{{order.fulfillment_status.replace('_',' ').title()}}</strong></div></div><div class="confirmation-total">{{currency}} {{'%.2f'|format(order.total|float)}}</div><div class="confirmation-actions"><a href="/shop" class="big-add">Keep shopping</a><a href="/" class="basket-link">Back to store</a></div></section>{% endblock %}{% block scripts %}<script>
 const root=document.querySelector('.confirmation');
 const pid=root?.dataset.payment;
-if(pid){
-  let checks=0;
-  const poll=async()=>{
-    checks++;
-    try{
-      let r=await fetch('/api/payments/'+encodeURIComponent(pid)+'/status',{credentials:'same-origin'}),d=await r.json();
-      if(d.status==='PAID'){document.getElementById('paymentMark').textContent='✓';document.getElementById('paymentTitle').textContent='Payment successful.';document.getElementById('paymentMessage').textContent='Payment confirmed. Your Denmart order is now confirmed.';return}
-      if(d.status==='FAILED'){document.getElementById('paymentMark').textContent='!';document.getElementById('paymentTitle').textContent='Payment was not completed.';document.getElementById('paymentMessage').textContent=d.message||'The payment was not confirmed. You can return to the store and try again.';return}
-      if(checks===5){await fetch('/api/payments/'+encodeURIComponent(pid)+'/reconcile',{method:'POST',credentials:'same-origin'});}
-    }catch(e){}
-    if(checks<36)setTimeout(poll,2500);else document.getElementById('paymentMessage').textContent='Payment is still being confirmed. You may keep this page open; Denmart will update the order when Safaricom sends confirmation.';
-  };
-  poll();
-}else if(new URLSearchParams(location.search).get('payment_error')){document.getElementById('paymentMark').textContent='!';document.getElementById('paymentTitle').textContent='Order received, payment not started.';document.getElementById('paymentMessage').textContent='Your order is recorded, but the M-PESA prompt could not be started. Check Daraja settings or try again.';}
+const human=s=>String(s||'').replaceAll('_',' ').replace(/\b\w/g,m=>m.toUpperCase());
+function paint(d){
+  if(!d)return;
+  const pay=d.payment_status||root.dataset.paymentStatus;
+  const fulfil=d.fulfillment_status || (d.order_status=== 'COMPLETED' ? 'DELIVERED' : root.dataset.fulfillment);
+  document.getElementById('paymentStatusLabel').textContent=human(pay);
+  document.getElementById('fulfillmentStatusLabel').textContent=human(fulfil);
+  if(pay==='PAID'){document.getElementById('paymentMark').textContent='✓';document.getElementById('paymentTitle').textContent='Payment confirmed.';document.getElementById('paymentMessage').textContent=fulfil==='DELIVERED'?'Payment confirmed and order delivered.':'Payment confirmed. Your order is now in the fulfilment queue.';}
+  else if(pay==='PENDING_APPROVAL'){document.getElementById('paymentMark').textContent='⌛';document.getElementById('paymentTitle').textContent='Payment pending approval.';document.getElementById('paymentMessage').textContent='Your M-PESA Till payment was submitted. Denmart will update the order when it is approved.';}
+  else if(pay==='FAILED'){document.getElementById('paymentMark').textContent='!';document.getElementById('paymentTitle').textContent='Payment needs attention.';document.getElementById('paymentMessage').textContent=d.message||'The payment was not confirmed. Please contact Denmart or try again.';}
+}
+paint({payment_status:root.dataset.paymentStatus,fulfillment_status:root.dataset.fulfillment});
+if(pid){let checks=0;const poll=async()=>{checks++;try{const r=await fetch('/api/payments/'+encodeURIComponent(pid)+'/status',{credentials:'same-origin'}),d=await r.json();paint(d);if(d.status==='PAID'||d.status==='FAILED')return;if(checks===5)await fetch('/api/payments/'+encodeURIComponent(pid)+'/reconcile',{method:'POST',credentials:'same-origin'});}catch(e){}if(checks<48)setTimeout(poll,2500);else if(root.dataset.paymentStatus==='PENDING_APPROVAL')document.getElementById('paymentMessage').textContent='Your payment is still pending approval. You can keep this page open and Denmart will update the status after review.';};poll();}
+else if(new URLSearchParams(location.search).get('payment_error')){document.getElementById('paymentMark').textContent='!';document.getElementById('paymentTitle').textContent='Order received, payment not started.';document.getElementById('paymentMessage').textContent='Your order is recorded, but the M-PESA prompt could not be started. Check Daraja settings or try the Till payment option.';}
 </script>{% endblock %}

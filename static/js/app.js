@@ -11,17 +11,31 @@
   window.cartRemove=function(i){const c=read();c.splice(i,1);save(c);renderCartPage();updateCounts();};
   window.placeOrder=async function(){
     const c=read();if(!c.length)return toast('Basket is empty');
+    const paymentMethod=document.querySelector('input[name="paymentMethod"]:checked')?.value||'stk';
+    const payload={store_code:new URLSearchParams(location.search).get('store')||window.DENMART_STORE||'',items:c.map(x=>({store_product_id:x.id,quantity:x.qty})),customer:{name:document.getElementById('custName').value.trim(),phone:document.getElementById('custPhone').value.trim(),email:document.getElementById('custEmail').value.trim()},delivery_address:document.getElementById('deliveryAddress').value.trim()};
+    if(!payload.customer.name||!payload.customer.phone)return toast('Name and phone are required');
+    if(paymentMethod==='till'&&!document.getElementById('mpesaReference')?.value.trim())return toast('Enter the M-PESA transaction code');
     const button=document.querySelector('.checkout-form .primary-btn');if(button){button.disabled=true;button.textContent='Preparing your order…'}
     try{
-      const payload={store_code:new URLSearchParams(location.search).get('store')||window.DENMART_STORE||'',items:c.map(x=>({store_product_id:x.id,quantity:x.qty})),customer:{name:document.getElementById('custName').value.trim(),phone:document.getElementById('custPhone').value.trim(),email:document.getElementById('custEmail').value.trim()},delivery_address:document.getElementById('deliveryAddress').value.trim()};
-      if(!payload.customer.name||!payload.customer.phone)return toast('Name and phone are required');
       const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'same-origin'});const d=await r.json();if(!r.ok)throw new Error(d.error||'Order could not be placed');
+      if(paymentMethod==='till'){
+        const p=await fetch('/api/payments/till/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:d.order_id,phone_number:payload.customer.phone,mpesa_reference:document.getElementById('mpesaReference').value.trim()}),credentials:'same-origin'});
+        const pd=await p.json();
+        save([]);
+        if(!p.ok)throw new Error(pd.error||'Till payment could not be submitted');
+        location.href='/order/'+encodeURIComponent(d.order_number)+'?payment='+encodeURIComponent(pd.payment_id);
+        return;
+      }
       const p=await fetch('/api/payments/mpesa/initiate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:d.order_id,amount:d.total,phone_number:payload.customer.phone}),credentials:'same-origin'});const pd=await p.json();
       save([]);
       if(!p.ok){location.href='/order/'+encodeURIComponent(d.order_number)+'?payment_error=1';return;}
       location.href='/order/'+encodeURIComponent(d.order_number)+'?payment='+encodeURIComponent(pd.payment_id);
     }catch(e){toast(e.message||'Checkout failed');if(button){button.disabled=false;button.textContent='Place order & continue to payment'}}
   };
+
+  const tillFields=document.getElementById('tillFields');
+  if(tillFields){document.querySelectorAll('input[name="paymentMethod"]').forEach(r=>r.addEventListener('change',()=>{tillFields.hidden=document.querySelector('input[name="paymentMethod"]:checked')?.value!=='till';}));}
+
 
   function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
   updateCounts();renderCartPage();

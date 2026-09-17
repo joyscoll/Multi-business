@@ -7,7 +7,7 @@ from flask_login import current_user, login_required
 from extensions import db
 from models import (Product, StoreProduct, PricingRule, PriceHistory, InventoryTransaction, User,
                     AuditLog, Sale, SaleItem, Order, Store, Business, Category, SystemError,
-                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, now)
+                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, Customer, now)
 from services.audit import audit
 from services.crypto import encrypt, decrypt
 from services.backup_restore import export_database_json, create_sqlite_snapshot, restore_database_json, restore_sqlite_snapshot
@@ -44,6 +44,8 @@ def _dashboard():
     gross_profit = Decimal(str(sales_total)) - Decimal(str(cost_total))
     net_result = gross_profit - Decimal(str(expenses_total))
     orders = Order.query.filter_by(business_id=current_user.business_id).count()
+    pending_orders = Order.query.filter_by(business_id=current_user.business_id, fulfillment_status="PENDING").count()
+    pending_payment_approvals = Order.query.filter_by(business_id=current_user.business_id, payment_status="PENDING_APPROVAL").count()
     low_stock = (StoreProduct.query.filter(StoreProduct.stock_quantity <= StoreProduct.reorder_level)
                  .join(Product).join(Store).filter(Store.business_id == current_user.business_id).count())
     products_online = (StoreProduct.query.join(Store).filter(
@@ -53,8 +55,160 @@ def _dashboard():
     recent = Sale.query.filter_by(business_id=current_user.business_id).order_by(Sale.created_at.desc()).limit(10).all()
     return render_template("admin/dashboard.html", sales_total=sales_total, today_sales=today_sales,
                            expenses_total=expenses_total, cost_total=cost_total, gross_profit=gross_profit,
-                           net_result=net_result, orders=orders, low_stock=low_stock,
+                           net_result=net_result, orders=orders, pending_orders=pending_orders,
+                           pending_payment_approvals=pending_payment_approvals, low_stock=low_stock,
                            products_online=products_online, stores=stores, recent=recent)
+
+
+ORDER_FULFILLMENT_STATES = [
+    "PENDING", "PACKING", "READY_FOR_DISPATCH", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"
+]
+
+
+def _release_order_reservation(order):
+    for line in OrderItem.query.filter_by(order_id=order.id).all():
+        sp = StoreProduct.query.filter_by(store_id=order.store_id, product_id=line.product_id).first()
+        if sp:
+            sp.reserved_quantity = max(Decimal("0"), Decimal(sp.reserved_quantity or 0) - Decimal(line.quantity))
+
+
+def _settle_order_payment(order, payment):
+    if payment.status == "PAID":
+        return True
+    for line in OrderItem.query.filter_by(order_id=order.id).all():
+        sp = StoreProduct.query.filter_by(store_id=order.store_id, product_id=line.product_id).first()
+        if not sp:
+            return False
+        available = Decimal(sp.stock_quantity or 0)
+        reserved = Decimal(sp.reserved_quantity or 0)
+        qty = Decimal(line.quantity)
+        if reserved < qty or available < qty:
+            return False
+    reference = (payment.external_reference or "").strip().upper()
+    if payment.provider_transaction_id:
+        reference = payment.provider_transaction_id
+    if not reference:
+        return False
+    duplicate = Payment.query.filter(Payment.provider_transaction_id == reference, Payment.id != payment.id).first()
+    if duplicate:
+        return False
+    payment.status = "PAID"
+    payment.provider_transaction_id = reference
+    payment.completed_at = now()
+    order.payment_status = "PAID"
+    order.status = "CONFIRMED"
+    for line in OrderItem.query.filter_by(order_id=order.id).all():
+        sp = StoreProduct.query.filter_by(store_id=order.store_id, product_id=line.product_id).first()
+        sp.reserved_quantity = max(Decimal("0"), Decimal(sp.reserved_quantity or 0) - Decimal(line.quantity))
+        sp.stock_quantity = Decimal(sp.stock_quantity or 0) - Decimal(line.quantity)
+        db.session.add(InventoryTransaction(
+            store_id=order.store_id, product_id=line.product_id, transaction_type="SALE",
+            quantity=-Decimal(line.quantity), unit_cost=sp.cost_price,
+            reference_type="ORDER", reference_id=order.id, created_by=current_user.id,
+        ))
+    return True
+
+
+@bp.get(f"{ADMIN_BASE}/orders")
+@admin_required("sales.view")
+def orders():
+    status_filter = request.args.get("status", "").strip().upper()
+    payment_filter = request.args.get("payment", "").strip().upper()
+    query = Order.query.filter_by(business_id=current_user.business_id)
+    if status_filter in ORDER_FULFILLMENT_STATES:
+        query = query.filter_by(fulfillment_status=status_filter)
+    if payment_filter in {"UNPAID", "PENDING_APPROVAL", "PAID", "FAILED"}:
+        query = query.filter_by(payment_status=payment_filter)
+    rows = query.order_by(Order.created_at.desc()).limit(250).all()
+    order_ids = [o.id for o in rows]
+    payments = []
+    if order_ids:
+        payments = (Payment.query.filter(Payment.order_id.in_(order_ids))
+                    .order_by(Payment.created_at.desc()).all())
+    latest_payment = {}
+    for payment in payments:
+        latest_payment.setdefault(payment.order_id, payment)
+    customer_ids = [o.customer_id for o in rows if o.customer_id]
+    customers = {c.id: c for c in Customer.query.filter(Customer.id.in_(customer_ids)).all()} if customer_ids else {}
+    return render_template("admin/orders.html", orders=rows, customers=customers,
+                           latest_payment=latest_payment, states=ORDER_FULFILLMENT_STATES,
+                           status_filter=status_filter, payment_filter=payment_filter)
+
+
+@bp.post(f"{ADMIN_BASE}/orders/<order_id>/payment/approve")
+@admin_required("payments.view")
+def approve_order_payment(order_id):
+    order = db.session.get(Order, order_id)
+    payment = (Payment.query.filter_by(order_id=order_id, method="MPESA_TILL")
+               .order_by(Payment.created_at.desc()).first())
+    if not order or order.business_id != current_user.business_id or not payment:
+        flash("Order or pending Till payment was not found.", "error")
+        return redirect(url_for("admin.orders"))
+    if payment.status != "PENDING_APPROVAL":
+        flash("That payment is no longer awaiting approval.", "error")
+        return redirect(url_for("admin.orders"))
+    if not _settle_order_payment(order, payment):
+        db.session.rollback()
+        flash("Payment could not be approved. Check the transaction reference and reserved stock.", "error")
+        return redirect(url_for("admin.orders"))
+    db.session.commit()
+    audit("ORDER_PAYMENT_APPROVED", "Order", order.id, new_values={"payment_id": payment.id, "reference": payment.provider_transaction_id})
+    flash(f"{order.order_number} payment approved.", "success")
+    return redirect(url_for("admin.orders"))
+
+
+@bp.post(f"{ADMIN_BASE}/orders/<order_id>/payment/reject")
+@admin_required("payments.view")
+def reject_order_payment(order_id):
+    order = db.session.get(Order, order_id)
+    payment = (Payment.query.filter_by(order_id=order_id, method="MPESA_TILL")
+               .order_by(Payment.created_at.desc()).first())
+    if not order or order.business_id != current_user.business_id or not payment:
+        flash("Order or pending Till payment was not found.", "error")
+        return redirect(url_for("admin.orders"))
+    if payment.status != "PENDING_APPROVAL":
+        flash("That payment is no longer awaiting approval.", "error")
+        return redirect(url_for("admin.orders"))
+    reason = request.form.get("reason", "Payment reference could not be verified.").strip()[:500]
+    payment.status = "FAILED"
+    payment.failure_message = reason or "Payment reference could not be verified."
+    order.payment_status = "FAILED"
+    order.status = "PAYMENT_FAILED"
+    _release_order_reservation(order)
+    db.session.commit()
+    audit("ORDER_PAYMENT_REJECTED", "Order", order.id, new_values={"payment_id": payment.id, "reason": payment.failure_message})
+    flash(f"{order.order_number} payment rejected; stock reservation released.", "success")
+    return redirect(url_for("admin.orders"))
+
+
+@bp.post(f"{ADMIN_BASE}/orders/<order_id>/fulfillment")
+@admin_required("sales.view")
+def update_order_fulfillment(order_id):
+    order = db.session.get(Order, order_id)
+    new_state = request.form.get("fulfillment_status", "").strip().upper()
+    if not order or order.business_id != current_user.business_id or new_state not in ORDER_FULFILLMENT_STATES:
+        flash("Invalid order status update.", "error")
+        return redirect(url_for("admin.orders"))
+    if new_state == "CANCELLED" and order.payment_status == "PAID":
+        flash("Paid orders cannot be cancelled here because refunds are not part of this workflow.", "error")
+        return redirect(url_for("admin.orders"))
+    if new_state not in {"PENDING", "CANCELLED"} and order.payment_status != "PAID":
+        flash("Only paid orders can be packed or delivered.", "error")
+        return redirect(url_for("admin.orders"))
+    old = order.fulfillment_status
+    order.fulfillment_status = new_state
+    if new_state == "CANCELLED":
+        if order.payment_status != "PAID":
+            _release_order_reservation(order)
+        order.status = "CANCELLED"
+    elif new_state == "DELIVERED":
+        order.status = "COMPLETED"
+    elif order.payment_status == "PAID":
+        order.status = "CONFIRMED"
+    db.session.commit()
+    audit("ORDER_FULFILLMENT_UPDATED", "Order", order.id, new_values={"from": old, "to": new_state})
+    flash(f"{order.order_number} marked {new_state.replace('_', ' ').title()}.", "success")
+    return redirect(url_for("admin.orders"))
 
 
 @bp.get(f"{ADMIN_BASE}/products")
