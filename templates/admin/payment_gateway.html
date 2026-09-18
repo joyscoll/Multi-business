@@ -3,23 +3,8 @@
 {% block chrome %}{% endblock %}
 {% block content %}
 <div class="control-shell">
-  <aside class="control-sidebar">
-    <div class="control-brand"><span class="brand-mark">DM</span><div><strong>{{business_name}}</strong><small>Payment gateway</small></div></div>
-    <nav>
-      <a href="/control">Overview</a>
-      <a class="active" href="/control/payment-gateway">💳 Payment monitor</a>
-      <a href="/control/orders">Online orders</a>
-      <a href="/control/products">Products & visibility</a>
-      <a href="/scan">📷 Scan stock</a>
-      <a href="/control/stores">Marts</a>
-      <a href="/control/users">Staff & access</a>
-      <a href="/control/expenses">Expenses</a>
-      <a href="/control/settings">M-PESA & settings</a>
-      <a href="/control/backups">Backups</a>
-      <a href="/control/audit">Audit</a>
-    </nav>
-    <div class="control-bottom"><span>MASTER ADMIN</span><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button>Sign out</button></form></div>
-  </aside>
+  {% set admin_sidebar_class = 'control-sidebar' %}
+{% include 'admin/_nav.html' %}
 
   <main class="control-main gateway-page">
     <header class="control-header">

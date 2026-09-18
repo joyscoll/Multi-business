@@ -1,0 +1,37 @@
+<aside class="{{ admin_sidebar_class|default('admin-nav') }} admin-nav-unified">
+  <div class="control-brand">
+    <span class="brand-mark">DM</span>
+    <div><strong>{{business_name}}</strong><small>Admin control centre</small></div>
+  </div>
+  <nav>
+    <a class="{% if request.path == '/control' %}active{% endif %}" href="/control">Overview</a>
+    <a class="{% if request.path.startswith('/control/payment-gateway') %}active{% endif %}" href="/control/payment-gateway">💳 Payments</a>
+    <a class="{% if request.path.startswith('/control/orders') %}active{% endif %}" href="/control/orders">🧾 Orders</a>
+    <a class="{% if request.path.startswith('/control/products') or request.path == '/scan' %}active{% endif %}" href="/control/products">📦 Catalogue</a>
+    <a class="{% if request.path.startswith('/control/categories') %}active{% endif %}" href="/control/categories">Categories</a>
+    <a href="/scan">📷 Scan stock</a>
+    <a class="{% if request.path.startswith('/control/inventory') %}active{% endif %}" href="/control/inventory">Inventory</a>
+    <a class="{% if request.path.startswith('/control/purchases') %}active{% endif %}" href="/control/purchases">Purchasing</a>
+    <a class="{% if request.path.startswith('/control/suppliers') %}active{% endif %}" href="/control/suppliers">Suppliers</a>
+    <a class="{% if request.path.startswith('/control/customers') %}active{% endif %}" href="/control/customers">Customers & loyalty</a>
+    <a class="{% if request.path.startswith('/control/stores') %}active{% endif %}" href="/control/stores">Marts</a>
+    <a class="{% if request.path.startswith('/control/users') %}active{% endif %}" href="/control/users">Staff & access</a>
+    <a class="{% if request.path.startswith('/control/shifts') %}active{% endif %}" href="/control/shifts">Cashier shifts</a>
+    <a class="{% if request.path.startswith('/control/expenses') %}active{% endif %}" href="/control/expenses">Expenses</a>
+    <a class="{% if request.path.startswith('/control/pricing') %}active{% endif %}" href="/control/pricing">Pricing</a>
+    <a class="{% if request.path.startswith('/control/reports') %}active{% endif %}" href="/control/reports">Reports</a>
+    <a class="{% if request.path.startswith('/control/daily-report') %}active{% endif %}" href="/control/daily-report">Daily close</a>
+    <a class="{% if request.path.startswith('/control/settings') %}active{% endif %}" href="/control/settings">Settings & M-PESA</a>
+    <a class="{% if request.path.startswith('/control/audit') %}active{% endif %}" href="/control/audit">Audit</a>
+    <a class="{% if request.path.startswith('/control/system-errors') %}active{% endif %}" href="/control/system-errors">System errors</a>
+    <a class="{% if request.path.startswith('/control/security') %}active{% endif %}" href="/control/security">Security</a>
+    <a class="{% if request.path.startswith('/control/backups') %}active{% endif %}" href="/control/backups">Backups</a>
+  </nav>
+  <div class="control-bottom">
+    <span>MASTER ADMIN</span>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+      <button type="submit">Sign out</button>
+    </form>
+  </div>
+</aside>

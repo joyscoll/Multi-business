@@ -1,1 +1,35 @@
-{% extends 'base.html' %}{% block body_class %}admin-page{% endblock %}{% block chrome %}<header class="admin-top"><div class="admin-brand">{{business_name}}<small>Pricing rules</small></div><a class="admin-action" href="/control">Overview</a></header>{% endblock %}{% block content %}<div class="admin-layout"><aside class="admin-nav"><a href="/control">Overview</a><a href="/control/products">Catalogue</a><a href="/scan">📷 Scan stock</a><a href="/control/stores">Marts</a><a class="active" href="/control/pricing">Pricing</a><a href="/control/users">Users</a><a href="/control/expenses">Expenses</a><a href="/control/security">Security</a><a href="/control/backups">Backups</a><a href="/control/audit">Audit</a><div class="nav-spacer"></div></aside><main class="admin-main"><div class="eyebrow">PRICING ENGINE</div><h1>Pricing rules</h1><section class="admin-panel"><table class="admin-table"><tr><th>Rule</th><th>Type</th><th>Margin</th><th>Rounding</th><th>Status</th></tr>{% for rule in rules %}<tr><td>{{rule.name}}</td><td>{{rule.rule_type}}</td><td>{{rule.margin_percent or 0}}%</td><td>{{rule.rounding_rule or 1}}</td><td>{{'ACTIVE' if rule.is_active else 'OFF'}}</td></tr>{% else %}<tr><td colspan="5">No pricing rules configured.</td></tr>{% endfor %}</table></section></main></div>{% endblock %}
+{% extends 'base.html' %}
+{% block body_class %}admin-page{% endblock %}
+{% block chrome %}{% endblock %}
+{% block content %}
+<div class="admin-layout">
+{% set admin_sidebar_class = 'admin-nav' %}{% include 'admin/_nav.html' %}
+<main class="admin-main">
+  <div class="eyebrow">PRICING ENGINE</div>
+  <h1>Pricing rules</h1>
+  <p class="muted">Set automatic margins or fixed mark-ups. Rules can apply to one mart or the whole business.</p>
+  <section class="admin-panel">
+    <h2>Create pricing rule</h2>
+    <form method="post" class="admin-form-grid">
+      <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+      <label>Name<input class="admin-input wide" name="name" placeholder="Default 20% cost plus" required></label>
+      <label>Rule type<select class="admin-input wide" name="rule_type"><option value="COST_PLUS_PERCENT">Cost + percentage</option><option value="FIXED_MARKUP">Fixed markup</option></select></label>
+      <label>Mart<select class="admin-input wide" name="store_id"><option value="">All marts</option>{% for s in stores %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select></label>
+      <label>Margin %<input class="admin-input wide" type="number" step="0.01" min="0" name="margin_percent" value="20"></label>
+      <label>Fixed markup<input class="admin-input wide" type="number" step="0.01" min="0" name="fixed_markup" value="0"></label>
+      <label>Round to KES<input class="admin-input wide" type="number" step="0.01" min="0.01" name="rounding_rule" value="1"></label>
+      <label>Minimum margin %<input class="admin-input wide" type="number" step="0.01" min="0" name="min_margin_percent" value="0"></label>
+      <label>Maximum discount %<input class="admin-input wide" type="number" step="0.01" min="0" name="max_discount_percent" value="0"></label>
+      <label>Priority<input class="admin-input wide" type="number" step="1" min="0" name="priority" value="100"></label>
+      <button class="admin-action" type="submit">Create rule</button>
+    </form>
+  </section>
+  <section class="admin-panel">
+    <div class="panel-title"><div><span class="eyebrow">LIVE RULES</span><h2>{{rules|length}} pricing rules</h2></div><form method="post" action="/control/pricing/apply"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="admin-action" type="submit">Apply active rules now</button></form></div>
+    <div class="table-wrap"><table class="admin-table"><tr><th>Rule</th><th>Mart</th><th>Type</th><th>Values</th><th>Priority</th><th>Status</th><th></th></tr>
+    {% for rule in rules %}<tr><td><strong>{{rule.name}}</strong></td><td>{{store_map.get(rule.store_id,'All marts')}}</td><td>{{rule.rule_type.replace('_',' ').title()}}</td><td>{% if rule.rule_type == 'FIXED_MARKUP' %}+ KES {{rule.fixed_markup or 0}}{% else %}{{rule.margin_percent or 0}}%{% endif %} · round {{rule.rounding_rule or 1}}</td><td>{{rule.priority}}</td><td>{{'ACTIVE' if rule.is_active else 'OFF'}}</td><td><form method="post" action="/control/pricing/{{rule.id}}/toggle"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="admin-action" type="submit">{{'Turn off' if rule.is_active else 'Turn on'}}</button></form></td></tr>
+    {% else %}<tr><td colspan="7">No pricing rules configured.</td></tr>{% endfor %}</table></div>
+  </section>
+</main>
+</div>
+{% endblock %}
