@@ -31,3 +31,16 @@ For live M-PESA operation, obtain and configure the business credentials in Safa
 
 ## Data model used by the final POS
 The authoritative database remains PostgreSQL on Render (or SQLite for local development). The POS browser additionally maintains a small IndexedDB local store for fast barcode/search responses and offline CASH/CARD queues. Online orders and payments remain server-side records and are visible to the control centre. The browser cache is not treated as the accounting source of truth.
+
+## Catalogue & delivery controls (v16)
+
+- The seeded Denmart catalogue currently contains 362 supermarket products across 20 categories.
+- Admin can create, edit, archive/delete products, change mart-specific cost/selling price/stock, toggle online/POS visibility, bulk import CSV and export the live catalogue.
+- Every mart can be edited, activated/deactivated, or safely archived when transaction history prevents hard deletion.
+- The online order flow remains lightweight: basket -> checkout/payment -> order confirmation -> optional bike-delivery request.
+- Bike delivery uses configurable base + per-kilometre charges stored in business settings.
+- Merchant/POS session UI now exposes network/shift state, a live session clock, mobile-safe navigation, and online-order fulfilment progression.
+
+### Bulk catalogue CSV
+
+Minimum headers: `name,selling_price`. Optional headers: `brand,sku,barcode,category,unit,pack_size,description,image_url,cost_price,stock_quantity,online,pos,enabled`.

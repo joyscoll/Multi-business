@@ -1,9 +1,10 @@
 from io import BytesIO
 import base64
+from decimal import Decimal
 from PIL import Image, ImageDraw, ImageFont
-from flask import Blueprint, render_template, request, session, send_file, jsonify, Response
+from flask import Blueprint, render_template, request, session, send_file, jsonify, Response, redirect, url_for, flash
 from extensions import db
-from models import Product, Store, StoreProduct, Category, SystemSetting, ProductAlias, Business
+from models import Product, Store, StoreProduct, Category, SystemSetting, ProductAlias, Business, Order, Delivery
 from services.search import forgiving_rank
 
 bp = Blueprint("shop", __name__)
@@ -64,9 +65,9 @@ def home():
                 return i
         return 99
     ranked = sorted(rows, key=lambda x: (rank(x), x.product.name.lower()))
-    essentials = ranked[:24]
-    more_products = [x for x in ranked[24:] if x not in essentials][:32]
-    return render_template("shop/home.html", stores=active_stores(), store=store, essentials=essentials, more_products=more_products, categories=categories)
+    essentials = ranked[:36]
+    more_products = [x for x in ranked[36:] if x not in essentials][:120]
+    return render_template("shop/home.html", stores=active_stores(), store=store, essentials=essentials, more_products=more_products, categories=categories, total_products=len(rows))
 
 
 @bp.get("/shop")
@@ -74,10 +75,10 @@ def shop():
     q = request.args.get("q", "").strip()
     category = request.args.get("category", "").strip()
     store = selected_store()
-    products = catalogue_query(store, q=q, category=category)[:300]
+    products = catalogue_query(store, q=q, category=category)[:1000]
     categories = (Category.query.filter_by(business_id=store.business_id, is_active=True)
                   .order_by(Category.sort_order, Category.name).all()) if store else []
-    return render_template("shop/shop.html", products=products, q=q, store=store, stores=active_stores(), categories=categories)
+    return render_template("shop/shop.html", products=products, q=q, store=store, stores=active_stores(), categories=categories, product_count=StoreProduct.query.join(Product).filter(StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True), Product.status == "ACTIVE", StoreProduct.store_id == store.id).count() if store else 0)
 
 
 @bp.get("/product/<slug>")
@@ -108,6 +109,57 @@ def order_confirmation(order_number):
     order = Order.query.filter_by(order_number=order_number).first_or_404()
     items = OrderItem.query.filter_by(order_id=order.id).all()
     return render_template("shop/order_confirmation.html", order=order, items=items, store=Store.query.get(order.store_id))
+
+
+@bp.get("/delivery/<order_number>")
+def delivery_request(order_number):
+    order = Order.query.filter_by(order_number=order_number).first_or_404()
+    store = db.session.get(Store, order.store_id)
+    if order.payment_status not in {"PAID", "PENDING_APPROVAL"}:
+        flash("Delivery can be requested after payment is confirmed or submitted.", "error")
+        return redirect(url_for("shop.order_confirmation", order_number=order.order_number))
+    existing = Delivery.query.filter_by(order_id=order.id).first()
+    base_setting = SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_bike_base_fee").first()
+    km_setting = SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_bike_per_km").first()
+    enabled_setting = SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_enabled").first()
+    try:
+        base_fee = Decimal(str(base_setting.value if base_setting else "100"))
+        per_km = Decimal(str(km_setting.value if km_setting else "20"))
+    except Exception:
+        base_fee, per_km = Decimal("100"), Decimal("20")
+    enabled = (enabled_setting.value if enabled_setting else "1") == "1"
+    return render_template("shop/delivery.html", order=order, store=store, existing=existing, base_fee=base_fee, per_km=per_km, enabled=enabled)
+
+
+@bp.post("/delivery/<order_number>/request")
+def submit_delivery_request(order_number):
+    order = Order.query.filter_by(order_number=order_number).first_or_404()
+    if order.payment_status not in {"PAID", "PENDING_APPROVAL"}:
+        flash("Delivery can only be requested after payment has been submitted.", "error")
+        return redirect(url_for("shop.order_confirmation", order_number=order.order_number))
+    if Delivery.query.filter_by(order_id=order.id).first():
+        flash("Delivery is already requested for this order.", "success")
+        return redirect(url_for("shop.delivery_request", order_number=order.order_number))
+    address = request.form.get("address", "").strip()
+    phone = request.form.get("phone", "").strip()
+    name = request.form.get("name", "").strip()
+    try:
+        km = Decimal(request.form.get("distance_km", "0") or "0")
+        base_fee = Decimal(str(SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_bike_base_fee").first().value if SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_bike_base_fee").first() else "100"))
+        per_km = Decimal(str(SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_bike_per_km").first().value if SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_bike_per_km").first() else "20"))
+    except Exception:
+        km = Decimal("0"); base_fee, per_km = Decimal("100"), Decimal("20")
+    if not address or not phone or not name or km < 0 or km > 200:
+        flash("Enter the recipient details, delivery address and a valid distance estimate.", "error")
+        return redirect(url_for("shop.delivery_request", order_number=order.order_number))
+    fee = (base_fee + (per_km * km)).quantize(Decimal("1"))
+    order.delivery_address = address
+    order.delivery_fee = fee
+    order.delivery_notes = f"Bike delivery requested · estimated {km} km · delivery fee KES {fee} · recipient {name} {phone}"
+    db.session.add(Delivery(order_id=order.id, status="PENDING", recipient_name=name[:160], recipient_phone=phone[:40], notes=order.delivery_notes))
+    db.session.commit()
+    flash(f"Bike delivery requested. Estimated delivery charge: KES {fee:.0f}.", "success")
+    return redirect(url_for("shop.delivery_request", order_number=order.order_number))
 
 
 @bp.get("/app-qr.png")
@@ -189,7 +241,7 @@ def shop_app_icon(size):
 
 @bp.get("/shop/sw.js")
 def shop_service_worker():
-    js = '''const CACHE_VERSION = "denmart-public-v15-pwa2";
+    js = '''const CACHE_VERSION = "denmart-public-v16";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const STATIC_ASSETS = ["/static/css/app.css","/static/js/app.js","/shop/manifest.webmanifest","/shop/app-icon/192.png","/shop/app-icon/512.png"];

@@ -13,7 +13,7 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 
 def safe_product_payload(r, include_stock=False):
     data = {"id": r.id, "product_id": r.product_id, "name": r.product.name, "barcode": r.product.barcode,
-            "sku": r.product.sku, "price": str(r.selling_price), "image_url": r.product.image_url}
+            "sku": r.product.sku, "price": str(r.selling_price), "image_url": r.product.image_url, "slug": r.product.slug, "category_id": r.product.category_id}
     if include_stock:
         data["stock"] = str(r.stock_quantity)
     return data
@@ -75,7 +75,7 @@ def pos_catalogue_cache():
     rows = (StoreProduct.query.join(Product)
             .filter(StoreProduct.is_available.is_(True), StoreProduct.store_id == current_user.store_id,
                     StoreProduct.available_pos.is_(True), Product.status == "ACTIVE")
-            .order_by(Product.name).limit(min(int(request.args.get("limit", 250)), 500)).all())
+            .order_by(Product.name).limit(min(int(request.args.get("limit", 500)), 1000)).all())
     return jsonify(items=[safe_product_payload(r, include_stock=True) for r in rows])
 
 
@@ -413,11 +413,31 @@ def pos_orders():
             .order_by(Order.created_at.desc()).limit(80).all())
     return jsonify(items=[{
         "order_number": o.order_number, "customer": (o.customer.name if getattr(o, "customer", None) else "Online customer"),
-        "total": str(o.total), "payment_status": o.payment_status, "status": o.status
+        "total": str(o.total), "payment_status": o.payment_status, "status": o.status, "fulfillment_status": o.fulfillment_status
     } for o in rows])
 
 
 @csrf.exempt
+
+
+@csrf.exempt
+@bp.post("/pos/orders/<order_number>/fulfillment")
+@cashier_api
+def pos_update_order_fulfillment(order_number):
+    from models import Order
+    states = {"PENDING", "PACKING", "READY_FOR_DISPATCH", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"}
+    order = Order.query.filter_by(order_number=order_number, store_id=current_user.store_id).first()
+    data = request.get_json(silent=True) or {}
+    new_state = str(data.get("fulfillment_status") or "").upper()
+    if not order or new_state not in states: return jsonify(error="invalid_order_or_status"), 400
+    if order.payment_status != "PAID" and new_state not in {"PENDING", "CANCELLED"}: return jsonify(error="order_not_paid"), 409
+    if new_state == "CANCELLED" and order.payment_status == "PAID": return jsonify(error="paid_order_requires_admin_refund_workflow"), 409
+    order.fulfillment_status = new_state
+    if new_state == "DELIVERED": order.status = "COMPLETED"
+    elif order.payment_status == "PAID": order.status = "CONFIRMED"
+    db.session.commit()
+    return jsonify(ok=True, order_number=order.order_number, fulfillment_status=order.fulfillment_status, status=order.status)
+
 @bp.post("/sync/offline")
 @cashier_api
 def sync_offline():

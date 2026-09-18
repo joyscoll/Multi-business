@@ -1,6 +1,8 @@
 from decimal import Decimal, InvalidOperation
 import json
 import base64
+import csv
+import io
 from io import BytesIO
 from PIL import Image
 from pathlib import Path
@@ -10,7 +12,7 @@ from flask_login import current_user, login_required
 from extensions import db
 from models import (Product, StoreProduct, PricingRule, PriceHistory, InventoryTransaction, User,
                     AuditLog, Sale, SaleItem, Order, Store, Business, Category, SystemError,
-                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, Customer, now)
+                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, Customer, ProductAlias, ProductImage, now)
 from services.audit import audit
 from services.crypto import encrypt, decrypt
 from services.backup_restore import export_database_json, create_sqlite_snapshot, restore_database_json, restore_sqlite_snapshot
@@ -218,13 +220,252 @@ def update_order_fulfillment(order_id):
 @admin_required("products.view")
 def products():
     q = request.args.get("q", "").strip()
+    store_id = request.args.get("store_id", "").strip()
+    category_id = request.args.get("category_id", "").strip()
     query = StoreProduct.query.join(Product).join(Store).filter(Store.business_id == current_user.business_id)
+    if store_id:
+        query = query.filter(StoreProduct.store_id == store_id)
+    if category_id:
+        query = query.filter(Product.category_id == category_id)
     if q:
         like = f"%{q}%"
         query = query.filter((Product.name.ilike(like)) | (Product.brand.ilike(like)) | (Product.barcode.ilike(like)) | (Product.sku.ilike(like)))
-    items = query.order_by(Product.name).limit(3000).all()
-    return render_template("admin/products.html", items=items,
-                           stores=Store.query.filter_by(business_id=current_user.business_id).order_by(Store.name).all(), q=q)
+    items = query.order_by(Product.name).limit(5000).all()
+    return render_template(
+        "admin/products.html", items=items,
+        stores=Store.query.filter_by(business_id=current_user.business_id).order_by(Store.name).all(),
+        categories=Category.query.filter_by(business_id=current_user.business_id).order_by(Category.sort_order, Category.name).all(),
+        q=q, store_id=store_id, category_id=category_id,
+    )
+
+
+@bp.post(f"{ADMIN_BASE}/products/create")
+@admin_required("products.create")
+def create_product():
+    name = request.form.get("name", "").strip()
+    brand = request.form.get("brand", "").strip() or None
+    category_id = request.form.get("category_id", "").strip() or None
+    unit = request.form.get("unit", "unit").strip() or "unit"
+    pack_size = request.form.get("pack_size", "").strip() or unit
+    sku = request.form.get("sku", "").strip() or None
+    barcode = request.form.get("barcode", "").strip() or None
+    description = request.form.get("description", "").strip() or None
+    image_url = request.form.get("image_url", "").strip() or None
+    store_id = request.form.get("store_id", "").strip() or None
+    try:
+        price = Decimal(request.form.get("selling_price", "0"))
+        cost = Decimal(request.form.get("cost_price", "0"))
+        stock = Decimal(request.form.get("stock_quantity", "0"))
+    except InvalidOperation:
+        flash("Enter valid cost, price and stock values.", "error")
+        return redirect(url_for("admin.products"))
+    if not name:
+        flash("Product name is required.", "error")
+        return redirect(url_for("admin.products"))
+    if price <= 0 or cost < 0 or stock < 0:
+        flash("Use a positive selling price and non-negative cost/stock.", "error")
+        return redirect(url_for("admin.products"))
+    if category_id and not Category.query.filter_by(id=category_id, business_id=current_user.business_id).first():
+        flash("Select a valid category.", "error"); return redirect(url_for("admin.products"))
+    if store_id and not Store.query.filter_by(id=store_id, business_id=current_user.business_id).first():
+        flash("Select a valid mart.", "error"); return redirect(url_for("admin.products"))
+    if sku and Product.query.filter_by(sku=sku).first():
+        flash("That SKU is already in use.", "error"); return redirect(url_for("admin.products"))
+    if barcode and Product.query.filter_by(barcode=barcode).first():
+        flash("That barcode is already in use.", "error"); return redirect(url_for("admin.products"))
+    from seed import slugify
+    base_slug = slugify(name) or "product"
+    slug = base_slug; n = 2
+    while Product.query.filter_by(slug=slug).first():
+        slug = f"{base_slug}-{n}"; n += 1
+    product = Product(name=name, slug=slug, brand=brand, category_id=category_id, unit=unit, pack_size=pack_size,
+                      sku=sku, barcode=barcode, description=description, image_url=image_url, status="ACTIVE",
+                      search_keywords=" ".join(x for x in [name.lower(), brand.lower() if brand else ""] if x))
+    db.session.add(product); db.session.flush()
+    stores = [db.session.get(Store, store_id)] if store_id else Store.query.filter_by(business_id=current_user.business_id, is_active=True).all()
+    if not stores:
+        db.session.rollback(); flash("Create an active mart before adding stock.", "error"); return redirect(url_for("admin.products"))
+    for store in stores:
+        db.session.add(StoreProduct(store_id=store.id, product_id=product.id, cost_price=cost, selling_price=price,
+                                     minimum_price=price, maximum_price=price * Decimal("1.30"), stock_quantity=stock,
+                                     reorder_level=5, is_available=True, available_online=True, available_pos=True))
+    db.session.add(ProductAlias(product_id=product.id, alias=name, alias_type="SEARCH"))
+    db.session.commit()
+    audit("PRODUCT_CREATED", "Product", product.id, new_values={"name": name, "sku": sku, "barcode": barcode, "stores": len(stores)})
+    flash(f"{name} added to {len(stores)} mart(s).", "success")
+    return redirect(url_for("admin.product_edit", product_id=product.id, store_id=stores[0].id))
+
+
+@bp.post(f"{ADMIN_BASE}/products/import")
+@admin_required("products.create")
+def import_products():
+    upload = request.files.get("catalogue_file")
+    store_id = request.form.get("store_id", "").strip() or None
+    if not upload or not upload.filename.lower().endswith(".csv"):
+        flash("Choose a CSV catalogue file.", "error"); return redirect(url_for("admin.products"))
+    if store_id and not Store.query.filter_by(id=store_id, business_id=current_user.business_id).first():
+        flash("Select a valid mart.", "error"); return redirect(url_for("admin.products"))
+    text = upload.read().decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    required = {"name", "selling_price"}
+    if not required.issubset({(h or "").strip().lower() for h in (reader.fieldnames or [])}):
+        flash("CSV needs at least name,selling_price columns.", "error"); return redirect(url_for("admin.products"))
+    from seed import slugify
+    stores = [db.session.get(Store, store_id)] if store_id else Store.query.filter_by(business_id=current_user.business_id, is_active=True).all()
+    created = updated = 0
+    errors = []
+    for line_no, raw in enumerate(reader, start=2):
+        row = {(k or "").strip().lower(): (v or "").strip() for k, v in raw.items()}
+        name = row.get("name", "")
+        if not name: continue
+        try:
+            price = Decimal(row.get("selling_price", "0")); cost = Decimal(row.get("cost_price", "0") or "0"); stock = Decimal(row.get("stock_quantity", "0") or "0")
+            if price <= 0 or cost < 0 or stock < 0: raise InvalidOperation
+        except InvalidOperation:
+            errors.append(f"Line {line_no}: invalid numeric values"); continue
+        category = None
+        category_name = row.get("category", "")
+        if category_name:
+            slug = slugify(category_name)
+            category = Category.query.filter_by(business_id=current_user.business_id, slug=slug).first()
+            if not category:
+                category = Category(business_id=current_user.business_id, name=category_name, slug=slug, is_active=True); db.session.add(category); db.session.flush()
+        sku = row.get("sku") or None; barcode = row.get("barcode") or None
+        product = None
+        if sku: product = Product.query.filter_by(sku=sku).first()
+        if not product and barcode: product = Product.query.filter_by(barcode=barcode).first()
+        if not product: product = Product.query.filter_by(slug=slugify(name)).first()
+        if product:
+            product.name = name; product.brand = row.get("brand") or product.brand; product.category_id = category.id if category else product.category_id
+            product.unit = row.get("unit") or product.unit; product.pack_size = row.get("pack_size") or product.pack_size
+            product.description = row.get("description") or product.description; product.image_url = row.get("image_url") or product.image_url
+            if sku: product.sku = sku
+            if barcode: product.barcode = barcode
+            updated += 1
+        else:
+            base = slugify(name) or "product"; slug = base; n = 2
+            while Product.query.filter_by(slug=slug).first(): slug = f"{base}-{n}"; n += 1
+            product = Product(name=name, slug=slug, brand=row.get("brand") or None, category_id=category.id if category else None,
+                              unit=row.get("unit") or "unit", pack_size=row.get("pack_size") or row.get("unit") or "unit",
+                              sku=sku, barcode=barcode, description=row.get("description") or None, image_url=row.get("image_url") or None,
+                              search_keywords=f"{name.lower()} {(row.get('brand') or '').lower()} {(category_name or '').lower()}".strip())
+            db.session.add(product); db.session.flush(); db.session.add(ProductAlias(product_id=product.id, alias=name, alias_type="SEARCH")); created += 1
+        for store in stores:
+            sp = StoreProduct.query.filter_by(store_id=store.id, product_id=product.id).first()
+            if not sp:
+                sp = StoreProduct(store_id=store.id, product_id=product.id); db.session.add(sp)
+            sp.cost_price = cost; sp.selling_price = price; sp.minimum_price = price; sp.maximum_price = price * Decimal("1.30")
+            sp.stock_quantity = stock; sp.is_available = row.get("enabled", "1").lower() not in {"0", "no", "false"}
+            sp.available_online = row.get("online", "1").lower() not in {"0", "no", "false"}; sp.available_pos = row.get("pos", "1").lower() not in {"0", "no", "false"}
+    db.session.commit()
+    audit("PRODUCT_CSV_IMPORTED", "Business", current_user.business_id, new_values={"created": created, "updated": updated, "errors": len(errors)})
+    msg = f"Catalogue import complete: {created} added, {updated} updated."
+    if errors: msg += f" {len(errors)} row(s) skipped."
+    flash(msg, "success" if not errors else "error")
+    return redirect(url_for("admin.products"))
+
+
+@bp.get(f"{ADMIN_BASE}/products/export.csv")
+@admin_required("backup.create")
+def export_products_csv():
+    rows = (StoreProduct.query.join(Product).join(Store).filter(Store.business_id == current_user.business_id)
+            .order_by(Product.name, Store.name).limit(10000).all())
+    out = io.StringIO(); writer = csv.writer(out)
+    writer.writerow(["name","brand","sku","barcode","category","unit","pack_size","description","image_url","mart","mart_code","cost_price","selling_price","stock_quantity","online","pos","enabled"])
+    for sp in rows:
+        p = sp.product; cat = db.session.get(Category, p.category_id) if p.category_id else None
+        writer.writerow([p.name,p.brand or "",p.sku or "",p.barcode or "",cat.name if cat else "",p.unit or "",p.pack_size or "",p.description or "",p.image_url or "",sp.store.name,sp.store.code,sp.cost_price,sp.selling_price,sp.stock_quantity,int(sp.available_online),int(sp.available_pos),int(sp.is_available)])
+    audit("CATALOGUE_CSV_EXPORTED", "Business", current_user.business_id, new_values={"rows": len(rows)})
+    return Response(out.getvalue(), mimetype="text/csv", headers={"Content-Disposition":"attachment; filename=denmart-catalogue.csv"})
+
+
+@bp.get(f"{ADMIN_BASE}/products/<product_id>/edit")
+@admin_required("products.edit")
+def product_edit(product_id):
+    product = db.session.get(Product, product_id)
+    if not product:
+        return "Not found", 404
+    owns_store = Store.query.filter_by(business_id=current_user.business_id).filter(Store.id.in_([sp.store_id for sp in StoreProduct.query.filter_by(product_id=product.id).all()])).first() if StoreProduct.query.filter_by(product_id=product.id).count() else None
+    if not Category.query.filter_by(id=product.category_id, business_id=current_user.business_id).first() if product.category_id else False:
+        pass
+    stores = Store.query.filter_by(business_id=current_user.business_id).order_by(Store.name).all()
+    store_id = request.args.get("store_id", "").strip()
+    selected_store = next((s for s in stores if s.id == store_id), None) or (owns_store if owns_store and owns_store.business_id == current_user.business_id else (stores[0] if stores else None))
+    if product.category_id and not Category.query.filter_by(id=product.category_id, business_id=current_user.business_id).first():
+        return "Forbidden", 403
+    for sp in StoreProduct.query.filter_by(product_id=product.id).all():
+        if sp.store.business_id == current_user.business_id:
+            continue
+        return "Forbidden", 403
+    return render_template("admin/product_edit.html", product=product, stores=stores, categories=Category.query.filter_by(business_id=current_user.business_id).order_by(Category.sort_order, Category.name).all(),
+                           selected_store=selected_store, store_product=(StoreProduct.query.filter_by(product_id=product.id, store_id=selected_store.id).first() if selected_store else None))
+
+
+@bp.post(f"{ADMIN_BASE}/products/<product_id>/edit")
+@admin_required("products.edit")
+def save_product(product_id):
+    product = db.session.get(Product, product_id)
+    if not product:
+        return "Not found", 404
+    if product.category_id and not Category.query.filter_by(id=product.category_id, business_id=current_user.business_id).first():
+        return "Forbidden", 403
+    old = {"name": product.name, "brand": product.brand, "sku": product.sku, "barcode": product.barcode, "status": product.status, "image_url": product.image_url}
+    product.name = request.form.get("name", product.name).strip() or product.name
+    product.brand = request.form.get("brand", "").strip() or None
+    product.category_id = request.form.get("category_id", "").strip() or None
+    product.unit = request.form.get("unit", "unit").strip() or "unit"
+    product.pack_size = request.form.get("pack_size", "").strip() or product.unit
+    product.sku = request.form.get("sku", "").strip() or None
+    product.barcode = request.form.get("barcode", "").strip() or None
+    product.description = request.form.get("description", "").strip() or None
+    product.image_url = request.form.get("image_url", "").strip() or None
+    product.status = "ACTIVE" if request.form.get("status") == "ACTIVE" else "ARCHIVED"
+    product.search_keywords = " ".join(x for x in [product.name.lower(), (product.brand or "").lower(), (product.description or "").lower()] if x)
+    sp_store_id = request.form.get("store_id", "").strip()
+    sp = StoreProduct.query.filter_by(product_id=product.id, store_id=sp_store_id).first()
+    if sp and sp.store.business_id == current_user.business_id:
+        try:
+            sp.cost_price = Decimal(request.form.get("cost_price", str(sp.cost_price)))
+            sp.selling_price = Decimal(request.form.get("selling_price", str(sp.selling_price)))
+            sp.minimum_price = Decimal(request.form.get("minimum_price", str(sp.minimum_price or sp.selling_price)))
+            maxv = request.form.get("maximum_price", "").strip(); sp.maximum_price = Decimal(maxv) if maxv else None
+            sp.stock_quantity = Decimal(request.form.get("stock_quantity", str(sp.stock_quantity)))
+            sp.reorder_level = Decimal(request.form.get("reorder_level", str(sp.reorder_level or 0)))
+        except InvalidOperation:
+            db.session.rollback(); flash("Check the numeric mart values.", "error"); return redirect(url_for("admin.product_edit", product_id=product.id, store_id=sp_store_id))
+        sp.is_available = request.form.get("enabled") == "1" and product.status == "ACTIVE"
+        sp.available_online = request.form.get("online") == "1" and sp.is_available
+        sp.available_pos = request.form.get("pos") == "1" and sp.is_available
+    alias = ProductAlias.query.filter_by(product_id=product.id, alias=product.name).first()
+    if not alias: db.session.add(ProductAlias(product_id=product.id, alias=product.name, alias_type="SEARCH"))
+    db.session.commit()
+    audit("PRODUCT_UPDATED", "Product", product.id, old_values=old, new_values={"name": product.name, "brand": product.brand, "sku": product.sku, "barcode": product.barcode, "status": product.status, "image_url": product.image_url})
+    flash("Product updated.", "success")
+    return redirect(url_for("admin.product_edit", product_id=product.id, store_id=sp_store_id))
+
+
+@bp.post(f"{ADMIN_BASE}/products/<product_id>/delete")
+@admin_required("products.delete")
+def delete_product(product_id):
+    product = db.session.get(Product, product_id)
+    if not product:
+        flash("Product not found.", "error"); return redirect(url_for("admin.products"))
+    references = (SaleItem.query.filter_by(product_id=product.id).count() + OrderItem.query.filter_by(product_id=product.id).count() + InventoryTransaction.query.filter_by(product_id=product.id).count())
+    old_name = product.name
+    if references:
+        product.status = "ARCHIVED"
+        StoreProduct.query.filter_by(product_id=product.id).update({"is_available": False, "available_online": False, "available_pos": False})
+        db.session.commit()
+        audit("PRODUCT_ARCHIVED", "Product", product.id, new_values={"reason":"historical references", "references": references})
+        flash(f"{old_name} was archived because it has transaction history.", "success")
+    else:
+        StoreProduct.query.filter_by(product_id=product.id).delete(synchronize_session=False)
+        ProductAlias.query.filter_by(product_id=product.id).delete(synchronize_session=False)
+        ProductImage.query.filter_by(product_id=product.id).delete(synchronize_session=False)
+        db.session.delete(product); db.session.commit()
+        audit("PRODUCT_DELETED", "Product", product_id, new_values={"name": old_name})
+        flash(f"{old_name} deleted.", "success")
+    return redirect(url_for("admin.products"))
 
 
 @bp.post(f"{ADMIN_BASE}/products/<store_product_id>/availability")
@@ -265,13 +506,6 @@ def update_price(store_product_id):
     return redirect(url_for("admin.products"))
 
 
-@bp.post(f"{ADMIN_BASE}/products/create")
-@admin_required("products.create")
-def create_product():
-    flash("The master catalogue is preloaded. Manage availability and prices here; add only through a controlled import later.", "error")
-    return redirect(url_for("admin.products"))
-
-
 @bp.get(f"{ADMIN_BASE}/pricing")
 @admin_required("reports.view")
 def pricing():
@@ -296,6 +530,46 @@ def stores():
                                  address=request.form.get("address", "").strip() or None, is_active=True))
             db.session.commit(); flash("Mart created.", "success")
     return render_template("admin/stores.html", stores=Store.query.filter_by(business_id=business.id).order_by(Store.name).all())
+
+
+@bp.post(f"{ADMIN_BASE}/stores/<store_id>/edit")
+@admin_required("products.edit")
+def edit_store(store_id):
+    store = db.session.get(Store, store_id)
+    if not store or store.business_id != current_user.business_id:
+        return "Not found", 404
+    code = request.form.get("code", "").strip().upper()
+    duplicate = Store.query.filter(Store.business_id == current_user.business_id, Store.code == code, Store.id != store.id).first()
+    if not request.form.get("name", "").strip() or not code or duplicate:
+        flash("Mart name/code is required and the code must be unique.", "error")
+        return redirect(url_for("admin.stores"))
+    old = {"name": store.name, "code": store.code, "phone": store.phone, "address": store.address, "active": store.is_active}
+    store.name = request.form.get("name").strip(); store.code = code; store.phone = request.form.get("phone", "").strip() or None; store.address = request.form.get("address", "").strip() or None
+    store.latitude = float(request.form.get("latitude")) if request.form.get("latitude", "").strip() else None
+    store.longitude = float(request.form.get("longitude")) if request.form.get("longitude", "").strip() else None
+    store.is_active = request.form.get("active") == "1"
+    db.session.commit(); audit("STORE_UPDATED", "Store", store.id, old_values=old, new_values={"name":store.name,"code":store.code,"active":store.is_active})
+    flash(f"{store.name} updated.", "success")
+    return redirect(url_for("admin.stores"))
+
+
+@bp.post(f"{ADMIN_BASE}/stores/<store_id>/delete")
+@admin_required("products.delete")
+def delete_store(store_id):
+    store = db.session.get(Store, store_id)
+    if not store or store.business_id != current_user.business_id:
+        return "Not found", 404
+    if store.id == current_user.store_id:
+        flash("You cannot delete the mart currently assigned to your account.", "error")
+        return redirect(url_for("admin.stores"))
+    refs = Sale.query.filter_by(store_id=store.id).count() + Order.query.filter_by(store_id=store.id).count() + InventoryTransaction.query.filter_by(store_id=store.id).count()
+    if refs:
+        store.is_active = False; db.session.commit(); audit("STORE_ARCHIVED", "Store", store.id, new_values={"references":refs})
+        flash(f"{store.name} was deactivated because it has transaction history.", "success")
+    else:
+        db.session.delete(store); db.session.commit(); audit("STORE_DELETED", "Store", store_id)
+        flash("Mart deleted.", "success")
+    return redirect(url_for("admin.stores"))
 
 
 @bp.route(f"{ADMIN_BASE}/users", methods=["GET", "POST"])
@@ -547,6 +821,22 @@ def settings():
         if not setting:
             setting = SystemSetting(business_id=business.id, key="footer_text", value=footer); db.session.add(setting)
         else: setting.value = footer
+        def save_setting(key, value):
+            setting = SystemSetting.query.filter_by(business_id=business.id, key=key).first()
+            if not setting:
+                db.session.add(SystemSetting(business_id=business.id, key=key, value=str(value)))
+            else:
+                setting.value = str(value)
+        if any(k in request.form for k in ("delivery_enabled", "bike_base_fee", "bike_per_km")):
+            try:
+                bike_base = Decimal(request.form.get("bike_base_fee", "100"))
+                bike_km = Decimal(request.form.get("bike_per_km", "20"))
+                if bike_base < 0 or bike_km < 0: raise InvalidOperation
+                save_setting("delivery_bike_base_fee", bike_base)
+                save_setting("delivery_bike_per_km", bike_km)
+                save_setting("delivery_enabled", "1" if request.form.get("delivery_enabled") == "1" else "0")
+            except InvalidOperation:
+                flash("Delivery fees must be valid non-negative amounts.", "error")
         if request.form.get("save_mpesa"):
             if not integration:
                 integration = PaymentIntegration(business_id=business.id, provider="SAFARICOM")
@@ -582,6 +872,12 @@ def settings():
             pass
     till_setting = SystemSetting.query.filter_by(business_id=business.id, key="mpesa_till_number").first()
     till_number = str(till_setting.value or "").strip() if till_setting else ""
+    bike_base_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_bike_base_fee").first()
+    bike_km_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_bike_per_km").first()
+    delivery_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_enabled").first()
     return render_template("admin/settings.html", business=business, integration=integration,
                            footer_text=setting.value if setting else "All rights reserved · Denmart Merchants",
-                           callback_url=callback, transaction_type=transaction_type, till_number=till_number)
+                           callback_url=callback, transaction_type=transaction_type, till_number=till_number,
+                           bike_base_fee=bike_base_setting.value if bike_base_setting else "100",
+                           bike_per_km=bike_km_setting.value if bike_km_setting else "20",
+                           delivery_enabled=(delivery_setting.value if delivery_setting else "1") == "1")
