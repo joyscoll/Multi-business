@@ -10,6 +10,7 @@ from models import (Product, ProductAlias, StoreProduct, Payment, Sale, SaleItem
                     SystemSetting, PaymentGatewayEvent)
 from services.search import forgiving_rank
 from services.payments.daraja import DarajaProvider
+from services.payments.settlement import order_received_total, order_outstanding, sale_received_total, sale_outstanding, settle_gateway_order_payment, settle_gateway_sale_payment
 from services.crypto import decrypt
 from services.loyalty import award_purchase_points
 
@@ -72,6 +73,46 @@ def pos_product_search():
     else:
         rows = rows[:50]
     return jsonify(items=[safe_product_payload(r, include_stock=True) for r in rows])
+
+
+@bp.get("/pos/mpesa-feed")
+@cashier_api
+def pos_mpesa_feed():
+    """Branch-scoped live M-PESA notifications for the POS face of the business."""
+    today = db.func.date(PaymentGatewayEvent.received_at) == db.func.current_date()
+    q = PaymentGatewayEvent.query.filter(
+        PaymentGatewayEvent.business_id == current_user.business_id,
+        PaymentGatewayEvent.store_id == current_user.store_id,
+    )
+    events = q.order_by(PaymentGatewayEvent.received_at.desc()).limit(8).all()
+    received = q.filter(today, PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"])).with_entities(
+        db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)
+    ).scalar() or 0
+    matched = q.filter(today, PaymentGatewayEvent.status == "MATCHED").with_entities(
+        db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)
+    ).scalar() or 0
+    feed=[]
+    for e in events:
+        row={"time": e.received_at.isoformat() if e.received_at else None, "amount": str(e.amount or 0),
+             "customer": e.customer or "M-PESA customer", "transaction": e.transaction_id or "—", "status": e.status,
+             "order_number": None, "receipt_number": None, "received_amount": None, "outstanding_amount": None, "required_amount": None,
+             "payment_label": "Received"}
+        if e.matched_payment_id:
+            paid = db.session.get(Payment, e.matched_payment_id)
+            if paid and paid.order_id:
+                order = db.session.get(Order, paid.order_id)
+                if order:
+                    row.update(order_number=order.order_number, required_amount=str(order.total),
+                               received_amount=str(order_received_total(order)), outstanding_amount=str(order_outstanding(order)),
+                               payment_label="Fully paid" if order.payment_status == "PAID" else "Part payment")
+            elif paid and paid.sale_id:
+                sale = db.session.get(Sale, paid.sale_id)
+                if sale:
+                    row.update(receipt_number=sale.receipt_number, required_amount=str(sale.total),
+                               received_amount=str(sale_received_total(sale)), outstanding_amount=str(sale_outstanding(sale)),
+                               payment_label="Fully paid" if sale.payment_status == "PAID" else "Part payment")
+        feed.append(row)
+    return jsonify(ok=True, received_total=str(received), matched_total=str(matched), events=feed)
 
 
 @bp.get("/pos/catalogue/cache")
@@ -192,6 +233,16 @@ def _gateway_secret():
     return (setting.value or "").strip() if setting else ""
 
 
+def _gateway_is_payment_message(sender, message):
+    text = f"{sender} {message}".lower()
+    if not re.search(r"mpesa|m-pesa|safaricom", text):
+        return False
+    # Never forward merchant balance/statement/airtime-only messages as receipts.
+    if re.search(r"balance|available balance|mini[- ]?statement|statement|airtime|bundle|data balance|new balance", text):
+        return False
+    return bool(re.search(r"received|paid|payment|confirmed|transaction", text))
+
+
 def _gateway_parse_amount(message):
     patterns = [
         r"(?:KSH|KSHS|KES)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
@@ -212,6 +263,7 @@ def _gateway_parse_transaction(message):
     patterns = [
         r"\b([A-Z0-9]{8,16})\s+CONFIRMED\b",
         r"\bCONFIRMED[.\s]+([A-Z0-9]{8,16})\b",
+        r"\bTRANSACTION(?:\s+CODE)?[:\s]+([A-Z0-9]{8,16})\b",
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -244,27 +296,82 @@ def _gateway_store(business_id, sim_slot):
     return store if store and store.business_id == business_id and store.is_active else None
 
 
-def _settle_gateway_match(event, payment):
-    from services.payments.settlement import settle_order_payment, settle_sale_payment
+def _intent_status_for_entity(entity, gateway_method):
+    total = Decimal(str(entity.total or 0))
+    received = order_received_total(entity) if isinstance(entity, Order) else sale_received_total(entity)
+    if received >= total and total > 0:
+        return "PAID"
+    return "PARTIALLY_PAID" if received > 0 else ("PENDING_APPROVAL" if gateway_method == "MPESA_TILL_INTENT" else "PENDING")
 
-    actor_id = None
-    if payment.order_id:
-        order = db.session.get(Order, payment.order_id)
-        if order and settle_order_payment(order, payment, actor_id=actor_id):
-            event.store_id = payment.store_id
-            event.status = "MATCHED"
-            event.matched_payment_id = payment.id
-            payment.raw_provider_reference = event.message
-            return True
-    elif payment.sale_id:
-        sale = db.session.get(Sale, payment.sale_id)
-        if sale and settle_sale_payment(sale, payment, actor_id=actor_id):
-            event.store_id = payment.store_id
-            event.status = "MATCHED"
-            event.matched_payment_id = payment.id
-            payment.raw_provider_reference = event.message
-            return True
-    return False
+
+def _normalise_person_name(value):
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _event_name_matches_order(event, order):
+    if not event.customer or not order or not order.customer_id:
+        return False
+    customer = db.session.get(Customer, order.customer_id)
+    if not customer:
+        return False
+    incoming = _normalise_person_name(event.customer)
+    expected = _normalise_person_name(customer.name)
+    return bool(incoming and expected and incoming == expected)
+
+
+def _settle_gateway_intent(intent, event):
+    from services.payments.settlement import _has_duplicate_reference
+    reference = (event.transaction_id or "").strip().upper()
+    amount = Decimal(str(event.amount or 0))
+    if amount <= 0 or not reference or _has_duplicate_reference(intent, reference):
+        return False, None
+    if intent.order_id:
+        order = db.session.get(Order, intent.order_id)
+        outstanding = order_outstanding(order) if order else Decimal("0")
+        if not order or outstanding < amount:
+            return False, None
+        if amount == outstanding:
+            from services.payments.settlement import _reserved_order_stock_ok
+            if not _reserved_order_stock_ok(order):
+                return False, None
+        actual = Payment(
+            business_id=intent.business_id, store_id=intent.store_id, order_id=order.id,
+            provider="SAFARICOM", method="MPESA_TILL" if intent.method in {"MPESA_TILL", "MPESA_TILL_INTENT"} else intent.method,
+            amount=amount, currency=current_app.config["CURRENCY"], status="PAID",
+            external_reference=reference, provider_transaction_id=reference,
+            phone_number=event.customer_phone or intent.phone_number,
+            raw_provider_reference=event.message, completed_at=now(),
+        )
+        db.session.add(actual); db.session.flush()
+        if not settle_gateway_order_payment(order, actual):
+            db.session.rollback(); return False, None
+        intent.status = _intent_status_for_entity(order, intent.method)
+        intent.provider_transaction_id = reference if intent.status == "PAID" else intent.provider_transaction_id
+        return True, actual
+    if intent.sale_id:
+        sale = db.session.get(Sale, intent.sale_id)
+        outstanding = sale_outstanding(sale) if sale else Decimal("0")
+        if not sale or outstanding < amount:
+            return False, None
+        if amount == outstanding:
+            from services.payments.settlement import _reserved_sale_stock_ok
+            if not _reserved_sale_stock_ok(sale):
+                return False, None
+        actual = Payment(
+            business_id=intent.business_id, store_id=intent.store_id, sale_id=sale.id,
+            provider="SAFARICOM", method="MPESA_GATEWAY" if intent.method == "MPESA_GATEWAY_INTENT" else intent.method,
+            amount=amount, currency=current_app.config["CURRENCY"], status="PAID",
+            external_reference=reference, provider_transaction_id=reference,
+            phone_number=event.customer_phone or intent.phone_number,
+            raw_provider_reference=event.message, completed_at=now(),
+        )
+        db.session.add(actual); db.session.flush()
+        if not settle_gateway_sale_payment(sale, actual):
+            db.session.rollback(); return False, None
+        intent.status = _intent_status_for_entity(sale, intent.method)
+        intent.provider_transaction_id = reference if intent.status == "PAID" else intent.provider_transaction_id
+        return True, actual
+    return False, None
 
 
 @csrf.exempt
@@ -274,7 +381,6 @@ def payment_gateway_sms():
     secret = _gateway_secret()
     if not secret or supplied_key != secret:
         return jsonify(error="gateway_not_authorized"), 401
-
     payload = request.get_json(silent=True) or {}
     event_id = (request.headers.get("X-RealMart-Event-Id") or payload.get("event_id") or "").strip()
     device_id = (request.headers.get("X-RealMart-Gateway-Id") or payload.get("gateway_device_id") or "").strip()[:120]
@@ -283,22 +389,17 @@ def payment_gateway_sms():
     source = str(payload.get("source") or "android_sms").strip()[:40]
     if not event_id or not device_id or not message:
         return jsonify(error="event_id_device_id_message_required"), 400
-    if not re.search(r"mpesa|m-pesa|safaricom", f"{sender} {message}", re.IGNORECASE):
-        return jsonify(ok=True, ignored=True), 200
-
-    business_setting = SystemSetting.query.filter_by(
-        key="payment_gateway_secret", value=secret
-    ).first()
+    if not _gateway_is_payment_message(sender, message):
+        return jsonify(ok=True, ignored=True, reason="not_a_payment_notification"), 200
+    business_setting = SystemSetting.query.filter_by(key="payment_gateway_secret", value=secret).first()
     if not business_setting:
         return jsonify(error="gateway_not_authorized"), 401
     business_id = business_setting.business_id
-
     try:
         sim_slot = int(payload.get("sim_slot", 0))
     except (TypeError, ValueError):
         sim_slot = 0
     sim_slot = 0 if sim_slot < 0 else min(sim_slot, 1)
-
     amount = None
     try:
         raw_amount = payload.get("amount")
@@ -308,88 +409,90 @@ def payment_gateway_sms():
         amount = None
     if amount is None:
         amount = _gateway_parse_amount(message)
-
     transaction_id = str(payload.get("transaction_id") or "").strip().upper()[:160] or _gateway_parse_transaction(message)
     if not transaction_id:
         transaction_id = f"EVENT-{event_id}"[:160]
-    existing = PaymentGatewayEvent.query.filter_by(
-        business_id=business_id, gateway_device_id=device_id,
-        transaction_id=transaction_id
-    ).first()
+    existing = PaymentGatewayEvent.query.filter_by(business_id=business_id, gateway_device_id=device_id, transaction_id=transaction_id).first()
     if existing:
-        return jsonify(ok=True, duplicate=True, event_id=existing.id), 200
-
+        return jsonify(ok=True, duplicate=True, event_id=existing.id, status=existing.status), 200
     customer = str(payload.get("customer") or "").strip()[:240] or _gateway_parse_customer(message)
     customer_phone = normalize_ke_phone(payload.get("customer_phone")) or _gateway_parse_phone(message)
     try:
-        received_at = datetime.fromtimestamp(
-            int(payload.get("received_at")) / 1000, tz=timezone.utc
-        ) if payload.get("received_at") else now()
+        received_at = datetime.fromtimestamp(int(payload.get("received_at")) / 1000, tz=timezone.utc) if payload.get("received_at") else now()
     except Exception:
         received_at = now()
-
     store = _gateway_store(business_id, sim_slot)
     event = PaymentGatewayEvent(
-        business_id=business_id,
-        store_id=store.id if store else None,
-        gateway_device_id=device_id,
-        sim_slot=sim_slot,
-        subscription_id=int(payload.get("subscription_id")) if str(payload.get("subscription_id") or "").isdigit() else None,
-        source=source or "android_sms",
-        sender=sender,
-        message=message,
-        received_at=received_at,
-        transaction_id=transaction_id,
-        amount=amount or Decimal("0"),
-        customer=customer,
-        customer_phone=customer_phone,
-        status="UNMATCHED",
-        raw_payload=payload,
+        business_id=business_id, store_id=store.id if store else None, gateway_device_id=device_id,
+        sim_slot=sim_slot, subscription_id=int(payload.get("subscription_id")) if str(payload.get("subscription_id") or "").isdigit() else None,
+        source=source or "android_sms", sender=sender, message=message, received_at=received_at,
+        transaction_id=transaction_id, amount=amount or Decimal("0"), customer=customer, customer_phone=customer_phone,
+        status="UNMATCHED", raw_payload=payload,
     )
-    db.session.add(event)
-    db.session.flush()
-
-    # 1) Exact reference matching handles online Till/Buy-Goods payments.
-    pending_ref = None
+    db.session.add(event); db.session.flush()
+    matched = False; actual = None
+    # 1) Exact transaction reference, when a buyer supplied it as a fallback.
     if transaction_id:
-        pending_ref = (Payment.query.filter_by(
-            business_id=business_id, method="MPESA_TILL", status="PENDING_APPROVAL",
-            external_reference=transaction_id
-        ).order_by(Payment.created_at.desc()).first())
-    matched = False
-    if pending_ref:
-        matched = _settle_gateway_match(event, pending_ref)
-
-    # 2) POS gateway payments can be matched by store + amount + phone, or,
-    #    when phone is absent, by a single recent pending amount.
-    if not matched and amount and store:
-        cutoff = now() - timedelta(minutes=10)
-        candidates = Payment.query.filter(
-            Payment.business_id == business_id,
-            Payment.store_id == store.id,
-            Payment.method == "MPESA_GATEWAY",
-            Payment.status == "PENDING",
-            Payment.amount == amount,
+        ref_intents = (Payment.query.filter(
+            Payment.business_id == business_id, Payment.method.in_(["MPESA_TILL", "MPESA_TILL_INTENT"]),
+            Payment.status.in_(["PENDING_APPROVAL", "PARTIALLY_PAID", "PENDING"]),
+            Payment.external_reference == transaction_id,
+        ).order_by(Payment.created_at.desc()).all())
+        for intent in ref_intents:
+            if intent.phone_number and customer_phone and normalize_ke_phone(intent.phone_number) != customer_phone:
+                continue
+            matched, actual = _settle_gateway_intent(intent, event)
+            if matched: break
+    # 2) Online Till automatic matching: prefer buyer phone; when the provider SMS has no phone,
+    # fall back to an exact unique buyer-name match. Never auto-match an ambiguous candidate.
+    if not matched and amount and store and (customer_phone or customer):
+        cutoff = now() - timedelta(hours=2)
+        candidates=[]
+        intents=(Payment.query.filter(
+            Payment.business_id == business_id, Payment.store_id == store.id,
+            Payment.method.in_(["MPESA_TILL_INTENT", "MPESA_TILL"]),
+            Payment.status.in_(["PENDING_APPROVAL", "PARTIALLY_PAID", "PENDING"]),
             Payment.created_at >= cutoff,
-        ).order_by(Payment.created_at.desc()).all()
-        if customer_phone:
-            exact = [p for p in candidates if normalize_ke_phone(p.phone_number) == customer_phone]
-            if exact:
-                candidates = exact
-        if len(candidates) == 1:
-            matched = _settle_gateway_match(event, candidates[0])
-
+        ).order_by(Payment.created_at.desc()).all())
+        for intent in intents:
+            if not intent.order_id:
+                continue
+            if customer_phone:
+                if normalize_ke_phone(intent.phone_number) != customer_phone:
+                    continue
+            else:
+                order_for_name = db.session.get(Order, intent.order_id)
+                if not _event_name_matches_order(event, order_for_name):
+                    continue
+            order=db.session.get(Order,intent.order_id)
+            if order and order.payment_status != "PAID" and order_outstanding(order) >= amount:
+                candidates.append(intent)
+        if len(candidates)==1:
+            matched, actual = _settle_gateway_intent(candidates[0], event)
+    # 3) POS gateway automatic matching: same mart + customer phone + no overpayment.
+    if not matched and amount and store and customer_phone:
+        cutoff = now() - timedelta(hours=20/3)
+        candidates=[]
+        intents=(Payment.query.filter(
+            Payment.business_id == business_id, Payment.store_id == store.id,
+            Payment.method.in_(["MPESA_GATEWAY_INTENT", "MPESA_GATEWAY"]),
+            Payment.status.in_(["PENDING", "PARTIALLY_PAID"]), Payment.created_at >= cutoff,
+        ).order_by(Payment.created_at.desc()).all())
+        for intent in intents:
+            if normalize_ke_phone(intent.phone_number) != customer_phone or not intent.sale_id:
+                continue
+            sale=db.session.get(Sale,intent.sale_id)
+            if sale and sale.payment_status != "PAID" and sale_outstanding(sale) >= amount:
+                candidates.append(intent)
+        if len(candidates)==1:
+            matched, actual = _settle_gateway_intent(candidates[0], event)
     event.status = "MATCHED" if matched else "UNMATCHED"
+    event.matched_payment_id = actual.id if actual else None
+    if matched and actual:
+        event.store_id = actual.store_id
     db.session.commit()
-    return jsonify(
-        ok=True,
-        event_id=event.id,
-        matched=matched,
-        transaction_id=transaction_id,
-        amount=str(amount) if amount is not None else "0",
-        store_id=event.store_id,
-        status=event.status,
-    ), 200
+    return jsonify(ok=True, event_id=event.id, matched=matched, transaction_id=transaction_id, amount=str(amount or 0),
+                   store_id=event.store_id, status=event.status, payment_id=actual.id if actual else None), 200
 
 
 @csrf.exempt
@@ -471,8 +574,10 @@ def till_payment_submit():
     order_id = data.get("order_id")
     reference = re.sub(r"[^A-Za-z0-9]", "", str(data.get("mpesa_reference") or "").strip()).upper()
     phone = normalize_ke_phone(data.get("phone_number"))
-    if not order_id or not reference or len(reference) < 6 or len(reference) > 20 or not phone:
-        return jsonify(error="order_reference_and_valid_phone_required"), 400
+    if not order_id or not phone:
+        return jsonify(error="order_and_valid_phone_required"), 400
+    if reference and (len(reference) < 6 or len(reference) > 20):
+        return jsonify(error="invalid_mpesa_reference"), 400
     order = db.session.get(Order, order_id)
     if not order:
         return jsonify(error="order_not_found"), 404
@@ -486,23 +591,45 @@ def till_payment_submit():
     till_number = str(till_setting.value or "").strip() if till_setting else ""
     if not till_number:
         return jsonify(error="mpesa_till_not_configured"), 503
-    existing = (Payment.query.filter_by(order_id=order.id, method="MPESA_TILL")
+    existing = (Payment.query.filter(Payment.order_id == order.id, Payment.method.in_(["MPESA_TILL_INTENT", "MPESA_TILL"]),
+                                     Payment.status.in_(["PENDING_APPROVAL", "PARTIALLY_PAID", "PENDING"]))
                 .order_by(Payment.created_at.desc()).first())
-    if existing and existing.status == "PENDING_APPROVAL":
-        return jsonify(ok=True, payment_id=existing.id, status=existing.status, message="Payment is already awaiting approval")
+    if existing:
+        if reference and not existing.external_reference:
+            existing.external_reference = reference
+            db.session.commit()
+        return jsonify(ok=True, payment_id=existing.id, status=existing.status, message="Payment is being monitored automatically",
+                       received=str(order_received_total(order)), outstanding=str(order_outstanding(order)), total=str(order.total))
     payment = Payment(
         business_id=order.business_id, store_id=order.store_id, order_id=order.id,
-        provider="SAFARICOM", method="MPESA_TILL", amount=order.total,
+        provider="SAFARICOM", method="MPESA_TILL_INTENT", amount=order.total,
         currency=current_app.config["CURRENCY"], status="PENDING_APPROVAL",
-        external_reference=reference, phone_number=phone,
+        external_reference=reference or None, phone_number=phone,
     )
     db.session.add(payment)
     order.payment_status = "PENDING_APPROVAL"
     order.status = "PENDING"
     db.session.commit()
-    return jsonify(ok=True, payment_id=payment.id, status=payment.status,
+    # If the optional transaction code points to an SMS that arrived just before the intent
+    # existed, reconcile that unmatched event immediately. This is the manual-reference backup.
+    if reference:
+        prior = (PaymentGatewayEvent.query.filter(
+            PaymentGatewayEvent.business_id == order.business_id,
+            PaymentGatewayEvent.store_id == order.store_id,
+            PaymentGatewayEvent.status == "UNMATCHED",
+            PaymentGatewayEvent.transaction_id == reference,
+        ).order_by(PaymentGatewayEvent.received_at.desc()).first())
+        if prior:
+            matched, actual = _settle_gateway_intent(payment, prior)
+            if matched:
+                prior.status = "MATCHED"
+                prior.matched_payment_id = actual.id if actual else None
+                db.session.commit()
+    current_status = _intent_status_for_entity(order, payment.method)
+    return jsonify(ok=True, payment_id=payment.id, status=current_status,
                    order_number=order.order_number, till_number=till_number,
-                   message="Payment submitted and awaiting approval")
+                   received=str(order_received_total(order)), outstanding=str(order_outstanding(order)),
+                   message="Payment submitted. Real Mart is listening for the M-PESA confirmation automatically.")
 
 
 @csrf.exempt
@@ -520,16 +647,14 @@ def payment_gateway_await():
     if sale.payment_status == "PAID":
         return jsonify(error="already_paid"), 409
 
-    existing = Payment.query.filter_by(
-        sale_id=sale.id, method="MPESA_GATEWAY", status="PENDING"
-    ).order_by(Payment.created_at.desc()).first()
+    existing = Payment.query.filter(Payment.sale_id == sale.id, Payment.method.in_(["MPESA_GATEWAY_INTENT", "MPESA_GATEWAY"]), Payment.status.in_(["PENDING", "PARTIALLY_PAID"])).order_by(Payment.created_at.desc()).first()
     if existing:
         return jsonify(ok=True, payment_id=existing.id, status=existing.status,
                        amount=str(existing.amount), message="Waiting for the M-PESA phone message")
 
     payment = Payment(
         business_id=sale.business_id, store_id=sale.store_id, sale_id=sale.id,
-        provider="SAFARICOM", method="MPESA_GATEWAY", amount=sale.total,
+        provider="SAFARICOM", method="MPESA_GATEWAY_INTENT", amount=sale.total,
         currency=current_app.config["CURRENCY"], status="PENDING", phone_number=phone,
     )
     db.session.add(payment)
@@ -548,12 +673,27 @@ def payment_status(payment_id):
             "receipt": payment.provider_transaction_id, "message": payment.failure_message}
     if payment.order_id:
         order = db.session.get(Order, payment.order_id)
-        data["order_status"] = order.status if order else None
-        data["payment_status"] = order.payment_status if order else None
-        data["fulfillment_status"] = order.fulfillment_status if order else None
+        received = order_received_total(order) if order else Decimal("0")
+        total = Decimal(str(order.total or 0)) if order else Decimal("0")
+        outstanding = max(Decimal("0"), total - received)
+        data.update({"order_status": order.status if order else None, "payment_status": order.payment_status if order else None,
+                     "fulfillment_status": order.fulfillment_status if order else None, "required_amount": str(total),
+                     "received_amount": str(received), "outstanding_amount": str(outstanding)})
+        if order and received >= total > 0:
+            data["status"] = "PAID"
+        elif received > 0:
+            data["status"] = "PARTIALLY_PAID"
     elif payment.sale_id:
         sale = db.session.get(Sale, payment.sale_id)
-        data["payment_status"] = sale.payment_status if sale else None
+        received = sale_received_total(sale) if sale else Decimal("0")
+        total = Decimal(str(sale.total or 0)) if sale else Decimal("0")
+        outstanding = max(Decimal("0"), total - received)
+        data.update({"payment_status": sale.payment_status if sale else None, "required_amount": str(total),
+                     "received_amount": str(received), "outstanding_amount": str(outstanding)})
+        if sale and received >= total > 0:
+            data["status"] = "PAID"
+        elif received > 0:
+            data["status"] = "PARTIALLY_PAID"
     return jsonify(data)
 
 
@@ -656,9 +796,12 @@ def pos_orders():
     from models import Customer
     rows = (Order.query.filter_by(store_id=current_user.store_id)
             .order_by(Order.created_at.desc()).limit(80).all())
+    from services.payments.settlement import order_received_total, order_outstanding
     return jsonify(items=[{
         "order_number": o.order_number, "customer": (o.customer.name if getattr(o, "customer", None) else "Online customer"),
-        "total": str(o.total), "payment_status": o.payment_status, "status": o.status, "fulfillment_status": o.fulfillment_status
+        "total": str(o.total), "received_amount": str(order_received_total(o)),
+        "outstanding_amount": str(order_outstanding(o)), "payment_status": o.payment_status,
+        "status": o.status, "fulfillment_status": o.fulfillment_status
     } for o in rows])
 
 

@@ -23,11 +23,13 @@ def create_app():
     from routes.pos import bp as pos_bp
     from routes.admin import bp as admin_bp
     from routes.api import bp as api_bp
+    from routes.scan import bp as scan_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(shop_bp)
     app.register_blueprint(pos_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(scan_bp)
 
     # Render services sometimes start with `gunicorn app:app` and skip
     # the explicit init_db.py command. Ensure a fresh database cannot
@@ -47,7 +49,7 @@ def create_app():
         # visitors to the correct login screen instead of relying on a
         # single Flask-Login endpoint that does not exist.
         target = request.args.get("next", "")
-        if request.path.startswith("/control"):
+        if request.path.startswith("/control") or request.path.startswith("/scan"):
             return redirect(f"/control?next={request.path}")
         return redirect(f"/merchant?next={request.path}")
 

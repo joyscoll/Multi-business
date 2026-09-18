@@ -4,7 +4,7 @@ from decimal import Decimal
 from PIL import Image, ImageDraw, ImageFont
 from flask import Blueprint, render_template, request, session, send_file, jsonify, Response, redirect, url_for, flash
 from extensions import db
-from models import Product, Store, StoreProduct, Category, SystemSetting, ProductAlias, ProductImage, Business, Order, Delivery
+from models import Product, Store, StoreProduct, Category, SystemSetting, ProductAlias, ProductImage, Business, Order, Delivery, Payment
 from services.search import forgiving_rank
 from services.product_images import resolve_product_image
 
@@ -109,15 +109,27 @@ def order_confirmation(order_number):
     from models import Order, OrderItem
     order = Order.query.filter_by(order_number=order_number).first_or_404()
     items = OrderItem.query.filter_by(order_id=order.id).all()
-    return render_template("shop/order_confirmation.html", order=order, items=items, store=Store.query.get(order.store_id))
+    store = Store.query.get(order.store_id)
+    till_setting = SystemSetting.query.filter_by(business_id=order.business_id, key="mpesa_till_number").first()
+    till_number = str(till_setting.value or "").strip() if till_setting else ""
+    active_payment = (Payment.query.filter(
+        Payment.order_id == order.id,
+        Payment.method.in_(["MPESA_TILL_INTENT", "MPESA_GATEWAY_INTENT", "MPESA_TILL", "MPESA_GATEWAY"]),
+        Payment.status.in_(["PENDING", "PENDING_APPROVAL", "PARTIALLY_PAID"]),
+    ).order_by(Payment.created_at.desc()).first())
+    from services.payments.settlement import order_received_total, order_outstanding
+    received_total = order_received_total(order)
+    outstanding_total = order_outstanding(order)
+    return render_template("shop/order_confirmation.html", order=order, items=items, store=store, till_number=till_number,
+                           active_payment=active_payment, received_total=received_total, outstanding_total=outstanding_total)
 
 
 @bp.get("/delivery/<order_number>")
 def delivery_request(order_number):
     order = Order.query.filter_by(order_number=order_number).first_or_404()
     store = db.session.get(Store, order.store_id)
-    if order.payment_status not in {"PAID", "PENDING_APPROVAL"}:
-        flash("Delivery can be requested after payment is confirmed or submitted.", "error")
+    if order.payment_status != "PAID":
+        flash("Please wait until payment is fully approved before continuing to delivery.", "error")
         return redirect(url_for("shop.order_confirmation", order_number=order.order_number))
     existing = Delivery.query.filter_by(order_id=order.id).first()
     base_setting = SystemSetting.query.filter_by(business_id=order.business_id, key="delivery_bike_base_fee").first()
@@ -135,8 +147,8 @@ def delivery_request(order_number):
 @bp.post("/delivery/<order_number>/request")
 def submit_delivery_request(order_number):
     order = Order.query.filter_by(order_number=order_number).first_or_404()
-    if order.payment_status not in {"PAID", "PENDING_APPROVAL"}:
-        flash("Delivery can only be requested after payment has been submitted.", "error")
+    if order.payment_status != "PAID":
+        flash("Please wait until payment is fully approved before requesting delivery.", "error")
         return redirect(url_for("shop.order_confirmation", order_number=order.order_number))
     if Delivery.query.filter_by(order_id=order.id).first():
         flash("Delivery is already requested for this order.", "success")
@@ -161,6 +173,21 @@ def submit_delivery_request(order_number):
     db.session.commit()
     flash(f"Bike delivery requested. Estimated delivery charge: KES {fee:.0f}.", "success")
     return redirect(url_for("shop.delivery_request", order_number=order.order_number))
+
+
+@bp.get("/mpesa-till-qr")
+def mpesa_till_qr():
+    import qrcode
+    store = selected_store()
+    if not store:
+        return ("", 404)
+    setting = SystemSetting.query.filter_by(business_id=store.business_id, key="mpesa_till_number").first()
+    till = str(setting.value or "").strip() if setting else ""
+    if not till:
+        return ("", 404)
+    img = qrcode.make(till)
+    buf = BytesIO(); img.save(buf, format="PNG", optimize=True); buf.seek(0)
+    return send_file(buf, mimetype="image/png", max_age=3600)
 
 
 @bp.get("/app-qr.png")

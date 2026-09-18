@@ -9,7 +9,7 @@
   {% elif not enabled %}
     <div class="confirm-mark">—</div><h1>Delivery is not active yet.</h1><p>The store has not enabled bike delivery. Your paid order is still safe and can be collected normally.</p>
   {% else %}
-    <div class="confirm-mark">⌁</div><h1>Need a bike?</h1><p>Keep this light: enter where the order should go and a distance estimate. Denmart will place the request in its delivery queue.</p>
+    <div class="confirm-mark">⌁</div><h1>Delivery</h1><p>Enter where the paid order should go and a distance estimate. The delivery team will receive the request.</p>
     <form method="post" action="/delivery/{{order.order_number}}/request" class="checkout-form clean-form delivery-request-form">
       <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
       <label>Your name<input name="name" value="{{request.form.get('name','') if request.form else ''}}" required></label>
@@ -17,7 +17,7 @@
       <label>Delivery address<textarea name="address" rows="3" required>{{order.delivery_address or ''}}</textarea></label>
       <label>Estimated distance (km)<input name="distance_km" type="number" min="0" max="200" step="0.1" value="2" id="deliveryKm" required><small class="muted">This is only a fee estimate; operations can confirm the final charge.</small></label>
       <div class="delivery-fee-box"><span>Bike charge</span><strong id="bikeFee">{{currency}} {{'%.0f'|format(base_fee + per_km*2)}}</strong><small>Base {{currency}} {{'%.0f'|format(base_fee)}} + {{currency}} {{'%.0f'|format(per_km)}}/km</small></div>
-      <button class="primary-btn full">Request bike delivery</button>
+      <button class="primary-btn full">Continue with delivery</button>
     </form>
   {% endif %}
   <div class="confirmation-actions"><a href="/order/{{order.order_number}}" class="basket-link">Back to order</a><a href="/shop" class="text-btn">Keep shopping</a></div>

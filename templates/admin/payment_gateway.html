@@ -10,6 +10,7 @@
       <a class="active" href="/control/payment-gateway">💳 Payment monitor</a>
       <a href="/control/orders">Online orders</a>
       <a href="/control/products">Products & visibility</a>
+      <a href="/scan">📷 Scan stock</a>
       <a href="/control/stores">Marts</a>
       <a href="/control/users">Staff & access</a>
       <a href="/control/expenses">Expenses</a>
@@ -73,7 +74,7 @@
 
     <section class="gateway-note">
       <strong>How matching works</strong>
-      <span>Online Till payments match by the M-PESA transaction reference. POS gateway payments can match by mart, amount, payer phone and a recent pending sale; ambiguous messages remain UNMATCHED instead of being assigned to the wrong sale.</span>
+      <span>Online Till payments can match automatically by mart + payer phone + amount, with the transaction code retained as a manual fallback. Payments can be partial: each confirmed amount is added to the order/sale balance until the exact total is reached. Ambiguous or overpaid messages remain UNMATCHED instead of being assigned to the wrong sale.</span>
     </section>
   </main>
 </div>

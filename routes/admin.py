@@ -505,7 +505,7 @@ def orders():
     query = Order.query.filter_by(business_id=current_user.business_id)
     if status_filter in ORDER_FULFILLMENT_STATES:
         query = query.filter_by(fulfillment_status=status_filter)
-    if payment_filter in {"UNPAID", "PENDING_APPROVAL", "PAID", "FAILED"}:
+    if payment_filter in {"UNPAID", "PENDING_APPROVAL", "PARTIALLY_PAID", "PAID", "FAILED"}:
         query = query.filter_by(payment_status=payment_filter)
     rows = query.order_by(Order.created_at.desc()).limit(250).all()
     order_ids = [o.id for o in rows]

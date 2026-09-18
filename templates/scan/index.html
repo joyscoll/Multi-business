@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+{% block title %}Stock Scanner{% endblock %}
+{% block chrome %}{% endblock %}
+{% block content %}
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<div class="scan-shell">
+  <header class="scan-header">
+    <div>
+      <div class="eyebrow">REAL MART · STOCK TOOL</div>
+      <h1>Scan stock</h1>
+      <p>Point the camera at a product barcode. Name it, add the quantity, and save.</p>
+    </div>
+    <a class="scan-back" href="/control">← Control</a>
+  </header>
+
+  <section class="scan-grid">
+    <div class="scan-main-panel">
+      <div class="scan-toolbar">
+        <label class="scan-store-field">Mart
+          <select id="scanStore">
+            {% for store in stores %}
+            <option value="{{store.id}}" {% if selected_store and selected_store.id == store.id %}selected{% endif %}>{{store.name}}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="scan-status" id="scannerStatus">Camera ready</div>
+      </div>
+
+      <div class="camera-wrap">
+        <video id="scanVideo" playsinline muted></video>
+        <div class="scan-crosshair" aria-hidden="true"><span></span></div>
+        <div class="camera-overlay" id="cameraOverlay">
+          <strong>Point at the barcode</strong>
+          <small>Hold steady. The code fills in automatically.</small>
+        </div>
+      </div>
+      <div class="scan-actions">
+        <button type="button" id="startCamera" class="scan-button primary">Start camera</button>
+        <button type="button" id="stopCamera" class="scan-button" disabled>Stop</button>
+        <button type="button" id="focusBarcode" class="scan-button">Use scanner</button>
+      </div>
+
+      <div class="barcode-entry">
+        <div>
+          <label for="barcodeInput">Barcode</label>
+          <input id="barcodeInput" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Camera or handheld scanner…">
+        </div>
+        <button type="button" id="lookupButton" class="scan-button">Find</button>
+      </div>
+      <p class="scan-note" id="scannerSupport"></p>
+    </div>
+
+    <aside class="scan-form-panel">
+      <div class="scan-panel-title"><span class="eyebrow">CURRENT ITEM</span><strong id="itemMode">Ready to scan</strong></div>
+      <div id="productPreview" class="product-preview empty">
+        <div class="preview-icon">▦</div>
+        <div><strong id="previewName">No barcode yet</strong><small id="previewMeta">Scan a product to begin.</small></div>
+      </div>
+
+      <div id="choiceWrap" class="choice-wrap" hidden>
+        <label>Choose the matching product</label>
+        <div id="productChoices"></div>
+      </div>
+
+      <form id="scanForm" class="scan-form">
+        <input type="hidden" id="productId">
+        <label>Product name
+          <input id="nameInput" type="text" maxlength="240" autocomplete="off" placeholder="e.g. Brookside Milk 500ml">
+        </label>
+        <label>Quantity to add
+          <input id="quantityInput" type="number" min="0" step="1" value="" inputmode="decimal" placeholder="Optional — leave blank to keep stock unchanged">
+        </label>
+        <div class="stock-strip">
+          <div><small>Current stock</small><strong id="currentStock">—</strong></div>
+          <div><small>After save</small><strong id="afterStock">—</strong></div>
+        </div>
+        <button type="submit" id="saveButton" class="scan-save" disabled>Save to database</button>
+      </form>
+      <div id="saveMessage" class="scan-message" hidden></div>
+    </aside>
+  </section>
+
+  <section class="scan-list-panel">
+    <div class="scan-panel-head">
+      <div><span class="eyebrow">LISTS</span><h2>Recent scans</h2></div>
+      <button type="button" id="refreshList" class="scan-button">Refresh</button>
+    </div>
+    <div id="recentList" class="recent-list"><div class="scan-empty">Nothing scanned yet.</div></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{url_for('static',filename='js/scan.js')}}"></script>
+{% endblock %}
