@@ -10,11 +10,17 @@
       <a href="/control/payment-gateway">💳 Payment monitor</a>
       <a href="/control/orders">Online orders</a>
       <a href="/control/products">Products & visibility</a>
+      <a href="/control/categories">Categories</a>
       <a href="/scan">📷 Scan stock</a>
+      <a href="/control/inventory">Inventory</a>
+      <a href="/control/purchases">Purchasing</a>
+      <a href="/control/customers">Customers & loyalty</a>
       <a href="/control/stores">Marts</a>
       <a href="/control/users">Staff & access</a>
+      <a href="/control/shifts">Cashier shifts</a>
       <a href="/control/expenses">Expenses</a>
       <a href="/control/pricing">Pricing</a>
+      <a href="/control/reports">Reports</a>
       <a href="/control/settings">M-PESA & settings</a>
       <a href="/control/audit">Audit</a>
       <a href="/control/system-errors">System errors</a>
@@ -39,8 +45,12 @@
 
     <div class="admin-launch-row">
       <a class="admin-launch primary" href="/control/payment-gateway"><strong>💳 M-PESA payment monitor</strong><span>{{gateway_received_count}} today · KES {{'%.2f'|format(gateway_received_total|float)}} received · {{gateway_unmatched_count}} unmatched</span></a>
-      <a class="admin-launch" href="/control/daily-report"><strong>Daily closing report</strong><span>Cash, M-PESA, card, online, stock cost and profit</span></a>
       <a class="admin-launch" href="/control/orders"><strong>Online orders</strong><span>{{pending_payment_approvals}} payments awaiting approval · {{pending_orders}} awaiting fulfilment</span></a>
+      <a class="admin-launch" href="/control/inventory"><strong>Inventory control</strong><span>{{low_stock}} low-stock rows · {{reserved_units}} units currently reserved</span></a>
+      <a class="admin-launch" href="/control/purchases"><strong>Purchasing</strong><span>{{purchase_open}} open purchase orders · {{supplier_count}} active suppliers</span></a>
+      <a class="admin-launch" href="/control/customers"><strong>Customers & loyalty</strong><span>{{customers_count}} active customers · {{loyalty_points}} loyalty points held</span></a>
+      <a class="admin-launch" href="/control/reports"><strong>Reports & analytics</strong><span>Trends, channels, products and daily performance</span></a>
+      <a class="admin-launch" href="/control/daily-report"><strong>Daily closing report</strong><span>Cash, M-PESA, card, online, stock cost and profit</span></a>
       <a class="admin-launch" href="/control/products"><strong>Catalogue</strong><span>1322 seeded identities · {{image_missing}} still need an exact product photo</span></a>
       <a class="admin-launch" href="/control/settings"><strong>M-PESA & settings</strong><span>Daraja, Till, delivery, loyalty and business identity</span></a>
     </div>
@@ -95,6 +105,18 @@
       {% else %}
       <div class="empty-state">No M-PESA phone messages have reached the gateway yet.</div>
       {% endif %}
+    </section>
+
+    <section class="control-panel">
+      <div class="panel-title"><div><span class="eyebrow">SYSTEM HEALTH</span><h2>Business control room</h2></div><a href="/control/security">Security</a></div>
+      <div class="intel-stat-grid">
+        <div class="intel-stat"><small>Active staff</small><strong>{{staff_count}}</strong></div>
+        <div class="intel-stat"><small>Open shifts</small><strong>{{open_shift_count}}</strong></div>
+        <div class="intel-stat"><small>Active suppliers</small><strong>{{supplier_count}}</strong></div>
+        <div class="intel-stat"><small>Unresolved errors</small><strong>{{unresolved_errors}}</strong></div>
+        <div class="intel-stat"><small>Inventory cost</small><strong>KES {{'%.2f'|format(inventory_cost_value|float)}}</strong></div>
+        <div class="intel-stat"><small>Inventory retail</small><strong>KES {{'%.2f'|format(inventory_retail_value|float)}}</strong></div>
+      </div>
     </section>
 
     <div class="control-columns">

@@ -11,11 +11,12 @@ from pathlib import Path
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session, send_file
 from flask_login import current_user, login_required
+from sqlalchemy import or_, case
 from extensions import db
 from models import (Product, StoreProduct, PricingRule, PriceHistory, InventoryTransaction, User,
                     AuditLog, Sale, SaleItem, Order, Store, Business, Category, SystemError,
-                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, Customer, ProductAlias, ProductImage,
-                     PaymentGatewayEvent, LoyaltyAccount, LoyaltyTransaction, Shift, CashDrawerTransaction, now)
+                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, Customer, ProductAlias, ProductImage, OrderItem,
+                    Supplier, PurchaseOrder, PurchaseOrderItem, PaymentGatewayEvent, LoyaltyAccount, LoyaltyTransaction, Shift, CashDrawerTransaction, now)
 from services.audit import audit
 from services.crypto import encrypt, decrypt
 from services.backup_restore import export_database_json, create_sqlite_snapshot, restore_database_json, restore_sqlite_snapshot
@@ -246,6 +247,27 @@ def _dashboard():
         db.func.coalesce(db.func.sum(LoyaltyAccount.points_balance), 0)
     ).filter_by(business_id=business_id).scalar() or 0
 
+    customers_count = Customer.query.filter_by(business_id=business_id, is_active=True).count()
+    staff_count = User.query.filter_by(business_id=business_id, is_active=True).count()
+    supplier_count = Supplier.query.filter_by(business_id=business_id, is_active=True).count()
+    open_shift_count = Shift.query.join(Store, Store.id == Shift.store_id).filter(
+        Store.business_id == business_id, Shift.status == "OPEN"
+    ).count()
+    unresolved_errors = SystemError.query.filter_by(business_id=business_id, resolved=False).count()
+    reserved_units = db.session.query(
+        db.func.coalesce(db.func.sum(StoreProduct.reserved_quantity), 0)
+    ).join(Store, Store.id == StoreProduct.store_id).filter(Store.business_id == business_id).scalar() or 0
+    inventory_cost_value = db.session.query(
+        db.func.coalesce(db.func.sum(StoreProduct.stock_quantity * StoreProduct.cost_price), 0)
+    ).join(Store, Store.id == StoreProduct.store_id).filter(Store.business_id == business_id).scalar() or 0
+    inventory_retail_value = db.session.query(
+        db.func.coalesce(db.func.sum(StoreProduct.stock_quantity * StoreProduct.selling_price), 0)
+    ).join(Store, Store.id == StoreProduct.store_id).filter(Store.business_id == business_id).scalar() or 0
+
+    purchase_open = PurchaseOrder.query.filter(
+        PurchaseOrder.business_id == business_id, PurchaseOrder.status.in_(["DRAFT", "ORDERED", "PARTIALLY_RECEIVED"])
+    ).count()
+
     return render_template(
         "admin/dashboard.html",
         sales_total=sales_total, today_sales=today_sales,
@@ -268,6 +290,9 @@ def _dashboard():
         gateway_latest=gateway_latest,
         loyalty_members=loyalty_members,
         loyalty_points=loyalty_points,
+        customers_count=customers_count, staff_count=staff_count, supplier_count=supplier_count,
+        open_shift_count=open_shift_count, unresolved_errors=unresolved_errors, reserved_units=reserved_units,
+        inventory_cost_value=inventory_cost_value, inventory_retail_value=inventory_retail_value, purchase_open=purchase_open,
     )
 
 
@@ -945,390 +970,348 @@ def update_price(store_product_id):
     return redirect(url_for("admin.products"))
 
 
-@bp.get(f"{ADMIN_BASE}/pricing")
-@admin_required("reports.view")
-def pricing():
-    rules = PricingRule.query.filter_by(business_id=current_user.business_id).order_by(PricingRule.priority).all()
-    return render_template("admin/pricing.html", rules=rules)
 
-
-@bp.get(f"{ADMIN_BASE}/stores")
-@bp.post(f"{ADMIN_BASE}/stores")
-@admin_required("products.edit")
-def stores():
-    business = db.session.get(Business, current_user.business_id)
+@bp.get(f"{ADMIN_BASE}/inventory")
+@bp.post(f"{ADMIN_BASE}/inventory/adjust")
+@admin_required("inventory.view")
+def inventory():
+    business_id = current_user.business_id
+    stores = Store.query.filter_by(business_id=business_id).order_by(Store.name).all()
+    store_id = (request.args.get("store_id") or request.form.get("store_id") or "").strip()
+    selected_store = db.session.get(Store, store_id) if store_id else None
+    if selected_store and selected_store.business_id != business_id:
+        selected_store = None
+        store_id = ""
     if request.method == "POST":
-        name = request.form.get("name", "").strip(); code = request.form.get("code", "").strip().upper()
-        if not name or not code:
-            flash("Mart name and code are required.", "error")
-        elif Store.query.filter_by(business_id=business.id, code=code).first():
-            flash("That mart code already exists.", "error")
-        else:
-            db.session.add(Store(business_id=business.id, name=name, code=code,
-                                 phone=request.form.get("phone", "").strip() or None,
-                                 address=request.form.get("address", "").strip() or None, is_active=True))
-            db.session.commit(); flash("Mart created.", "success")
-    return render_template("admin/stores.html", stores=Store.query.filter_by(business_id=business.id).order_by(Store.name).all())
+        if not current_user.has_permission("inventory.adjust") and current_user.role.name != "OWNER":
+            return "Forbidden", 403
+        product_id = request.form.get("product_id", "").strip()
+        try:
+            delta = Decimal(request.form.get("quantity_delta", "0"))
+            unit_cost = Decimal(request.form.get("unit_cost", "0") or "0")
+        except InvalidOperation:
+            flash("Quantity and cost must be valid numbers.", "error")
+            return redirect(url_for("admin.inventory", store_id=store_id))
+        if not selected_store or not product_id or delta == 0 or unit_cost < 0:
+            flash("Choose a mart, product and a non-zero quantity change.", "error")
+            return redirect(url_for("admin.inventory", store_id=store_id))
+        product = db.session.get(Product, product_id)
+        if not product:
+            flash("Product not found.", "error")
+            return redirect(url_for("admin.inventory", store_id=store_id))
+        sp = StoreProduct.query.filter_by(store_id=selected_store.id, product_id=product.id).with_for_update().first()
+        if not sp:
+            sp = StoreProduct(store_id=selected_store.id, product_id=product.id, cost_price=unit_cost, selling_price=Decimal("0"), stock_quantity=0, reserved_quantity=0)
+            db.session.add(sp); db.session.flush()
+        current_stock = Decimal(sp.stock_quantity or 0)
+        reserved = Decimal(sp.reserved_quantity or 0)
+        new_stock = current_stock + delta
+        if new_stock < 0 or new_stock < reserved:
+            flash(f"Stock cannot fall below reserved quantity ({reserved}).", "error")
+            return redirect(url_for("admin.inventory", store_id=store_id))
+        old = {"stock": str(current_stock), "cost": str(sp.cost_price or 0)}
+        sp.stock_quantity = new_stock
+        if unit_cost > 0:
+            sp.cost_price = unit_cost
+        txn_type = "ADJUSTMENT_IN" if delta > 0 else "ADJUSTMENT_OUT"
+        db.session.add(InventoryTransaction(
+            store_id=selected_store.id, product_id=product.id, transaction_type=txn_type,
+            quantity=delta, unit_cost=sp.cost_price, reference_type="ADMIN_ADJUSTMENT",
+            reference_id=sp.id, notes=request.form.get("notes", "").strip()[:500] or None, created_by=current_user.id,
+        ))
+        db.session.commit()
+        audit("INVENTORY_ADJUSTED", "StoreProduct", sp.id, old_values=old, new_values={"stock": str(sp.stock_quantity), "cost": str(sp.cost_price), "delta": str(delta)})
+        flash(f"{product.name}: stock is now {sp.stock_quantity} at {selected_store.name}.", "success")
+        return redirect(url_for("admin.inventory", store_id=selected_store.id))
+
+    q = (request.args.get("q") or "").strip()
+    low = request.args.get("low") == "1"
+    query = StoreProduct.query.join(Store).join(Product).filter(Store.business_id == business_id)
+    if selected_store:
+        query = query.filter(StoreProduct.store_id == selected_store.id)
+    if q:
+        needle = f"%{q}%"
+        query = query.filter(or_(Product.name.ilike(needle), Product.barcode.ilike(needle), Product.sku.ilike(needle)))
+    if low:
+        query = query.filter(StoreProduct.stock_quantity <= StoreProduct.reorder_level)
+    rows = query.order_by((StoreProduct.stock_quantity - StoreProduct.reorder_level).asc(), Product.name.asc()).limit(400).all()
+    total_cost = sum((Decimal(r.stock_quantity or 0) * Decimal(r.cost_price or 0) for r in rows), Decimal("0"))
+    total_retail = sum((Decimal(r.stock_quantity or 0) * Decimal(r.selling_price or 0) for r in rows), Decimal("0"))
+    low_count = sum(1 for r in rows if Decimal(r.stock_quantity or 0) <= Decimal(r.reorder_level or 0))
+    return render_template("admin/inventory.html", rows=rows, stores=stores, store_id=store_id, selected_store=selected_store,
+                           q=q, low=low, total_cost=total_cost, total_retail=total_retail, low_count=low_count)
 
 
-@bp.post(f"{ADMIN_BASE}/stores/<store_id>/edit")
+@bp.route(f"{ADMIN_BASE}/categories", methods=["GET", "POST"])
 @admin_required("products.edit")
-def edit_store(store_id):
-    store = db.session.get(Store, store_id)
-    if not store or store.business_id != current_user.business_id:
-        return "Not found", 404
-    code = request.form.get("code", "").strip().upper()
-    duplicate = Store.query.filter(Store.business_id == current_user.business_id, Store.code == code, Store.id != store.id).first()
-    if not request.form.get("name", "").strip() or not code or duplicate:
-        flash("Mart name/code is required and the code must be unique.", "error")
-        return redirect(url_for("admin.stores"))
-    old = {"name": store.name, "code": store.code, "phone": store.phone, "address": store.address, "active": store.is_active}
-    store.name = request.form.get("name").strip(); store.code = code; store.phone = request.form.get("phone", "").strip() or None; store.address = request.form.get("address", "").strip() or None
-    store.latitude = float(request.form.get("latitude")) if request.form.get("latitude", "").strip() else None
-    store.longitude = float(request.form.get("longitude")) if request.form.get("longitude", "").strip() else None
-    store.is_active = request.form.get("active") == "1"
-    db.session.commit(); audit("STORE_UPDATED", "Store", store.id, old_values=old, new_values={"name":store.name,"code":store.code,"active":store.is_active})
-    flash(f"{store.name} updated.", "success")
-    return redirect(url_for("admin.stores"))
-
-
-@bp.post(f"{ADMIN_BASE}/stores/<store_id>/delete")
-@admin_required("products.delete")
-def delete_store(store_id):
-    store = db.session.get(Store, store_id)
-    if not store or store.business_id != current_user.business_id:
-        return "Not found", 404
-    if store.id == current_user.store_id:
-        flash("You cannot delete the mart currently assigned to your account.", "error")
-        return redirect(url_for("admin.stores"))
-    refs = Sale.query.filter_by(store_id=store.id).count() + Order.query.filter_by(store_id=store.id).count() + InventoryTransaction.query.filter_by(store_id=store.id).count()
-    if refs:
-        store.is_active = False; db.session.commit(); audit("STORE_ARCHIVED", "Store", store.id, new_values={"references":refs})
-        flash(f"{store.name} was deactivated because it has transaction history.", "success")
-    else:
-        db.session.delete(store); db.session.commit(); audit("STORE_DELETED", "Store", store_id)
-        flash("Mart deleted.", "success")
-    return redirect(url_for("admin.stores"))
-
-
-@bp.route(f"{ADMIN_BASE}/users", methods=["GET", "POST"])
-@admin_required("users.manage")
-def users():
+def categories():
+    business_id = current_user.business_id
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        role_id = request.form.get("role_id", "").strip()
-        store_id = request.form.get("store_id", "").strip() or None
-        role = db.session.get(Role, role_id)
-        if not name or not username or len(password) < 8 or not role:
-            flash("Name, username, an 8+ character password and a valid role are required.", "error")
-        elif User.query.filter(db.func.lower(User.username) == username.lower()).first():
-            flash("That username is already in use.", "error")
-        elif store_id and not Store.query.filter_by(id=store_id, business_id=current_user.business_id).first():
-            flash("Select a valid mart.", "error")
+        if not name:
+            flash("Category name is required.", "error")
+        elif Category.query.filter_by(business_id=business_id, name=name).first():
+            flash("That category already exists.", "error")
         else:
-            user = User(business_id=current_user.business_id, store_id=store_id, name=name,
-                        username=username, role_id=role.id, is_active=True)
-            user.set_password(password)
-            db.session.add(user); db.session.commit()
-            audit("USER_CREATED", "User", user.id, new_values={"username": username, "role": role.name, "store_id": store_id})
-            flash(f"{name} can now sign in to the assigned system.", "success")
-            return redirect(url_for("admin.users"))
-    return render_template("admin/users.html", users=User.query.filter_by(business_id=current_user.business_id).order_by(User.name).all(),
-                           roles=Role.query.order_by(Role.name).all(), stores=Store.query.filter_by(business_id=current_user.business_id).order_by(Store.name).all())
+            slug = re_slug = "-".join(name.lower().split())[:140]
+            if Category.query.filter_by(business_id=business_id, slug=slug).first():
+                slug = f"{slug}-{secrets.token_hex(2)}"
+            db.session.add(Category(business_id=business_id, name=name, slug=slug, description=request.form.get("description", "").strip() or None, sort_order=int(request.form.get("sort_order", 0) or 0), is_active=True))
+            db.session.commit(); audit("CATEGORY_CREATED", "Category", None, new_values={"name": name}); flash("Category created.", "success")
+    cats = Category.query.filter_by(business_id=business_id).order_by(Category.sort_order, Category.name).all()
+    usage = {c.id: Product.query.filter_by(category_id=c.id).count() for c in cats}
+    return render_template("admin/categories.html", categories=cats, usage=usage)
 
 
-@bp.post(f"{ADMIN_BASE}/users/<user_id>/toggle")
-@admin_required("users.manage")
-def toggle_user(user_id):
-    user = db.session.get(User, user_id)
-    if not user or user.business_id != current_user.business_id:
+@bp.post(f"{ADMIN_BASE}/categories/<category_id>/toggle")
+@admin_required("products.edit")
+def toggle_category(category_id):
+    category = db.session.get(Category, category_id)
+    if not category or category.business_id != current_user.business_id:
         return "Not found", 404
-    if user.id == current_user.id:
-        flash("The master administrator cannot disable their own account.", "error")
-        return redirect(url_for("admin.users"))
-    user.is_active = not user.is_active
-    db.session.commit()
-    audit("USER_STATUS_CHANGED", "User", user.id, new_values={"active": user.is_active})
-    flash(f"{user.name} is now {'active' if user.is_active else 'disabled'}.", "success")
-    return redirect(url_for("admin.users"))
+    category.is_active = not category.is_active
+    db.session.commit(); audit("CATEGORY_STATUS_CHANGED", "Category", category.id, new_values={"active": category.is_active})
+    flash(f"{category.name} is now {'active' if category.is_active else 'hidden'}.", "success")
+    return redirect(url_for("admin.categories"))
 
 
-@bp.get(f"{ADMIN_BASE}/expenses")
-@bp.post(f"{ADMIN_BASE}/expenses")
-@admin_required("reports.view")
-def expenses():
+@bp.route(f"{ADMIN_BASE}/suppliers", methods=["GET", "POST"])
+@admin_required("inventory.view")
+def suppliers():
+    business_id = current_user.business_id
     if request.method == "POST":
-        try: amount = Decimal(request.form.get("amount", "0"))
-        except InvalidOperation: amount = Decimal("0")
-        if amount <= 0 or not request.form.get("description", "").strip():
-            flash("Description and a positive amount are required.", "error")
+        name = request.form.get("name", "").strip()
+        if not name:
+            flash("Supplier name is required.", "error")
         else:
-            db.session.add(Expense(business_id=current_user.business_id, store_id=request.form.get("store_id") or None,
-                                    category=request.form.get("category", "General").strip() or "General",
-                                    description=request.form.get("description", "").strip(), amount=amount,
-                                    created_by=current_user.id))
-            db.session.commit(); flash("Expense recorded.", "success")
-    rows = Expense.query.filter_by(business_id=current_user.business_id).order_by(Expense.incurred_at.desc()).limit(500).all()
-    total = db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)).filter_by(business_id=current_user.business_id).scalar() or 0
-    return render_template("admin/expenses.html", rows=rows, total=total,
-                           stores=Store.query.filter_by(business_id=current_user.business_id).order_by(Store.name).all())
+            supplier = Supplier(business_id=business_id, name=name, phone=request.form.get("phone", "").strip() or None,
+                                email=request.form.get("email", "").strip() or None, address=request.form.get("address", "").strip() or None,
+                                tax_identifier=request.form.get("tax_identifier", "").strip() or None, is_active=True)
+            db.session.add(supplier); db.session.commit(); audit("SUPPLIER_CREATED", "Supplier", supplier.id, new_values={"name": name}); flash("Supplier added.", "success")
+            return redirect(url_for("admin.suppliers"))
+    rows = Supplier.query.filter_by(business_id=business_id).order_by(Supplier.is_active.desc(), Supplier.name.asc()).all()
+    return render_template("admin/suppliers.html", suppliers=rows)
 
 
-@bp.get(f"{ADMIN_BASE}/system-errors")
-@admin_required("reports.view")
-def system_errors():
-    errors = SystemError.query.filter_by(business_id=current_user.business_id).order_by(SystemError.created_at.desc()).limit(500).all()
-    return render_template("admin/system_errors.html", errors=errors)
+@bp.post(f"{ADMIN_BASE}/suppliers/<supplier_id>/toggle")
+@admin_required("inventory.view")
+def toggle_supplier(supplier_id):
+    supplier = db.session.get(Supplier, supplier_id)
+    if not supplier or supplier.business_id != current_user.business_id:
+        return "Not found", 404
+    supplier.is_active = not supplier.is_active
+    db.session.commit(); audit("SUPPLIER_STATUS_CHANGED", "Supplier", supplier.id, new_values={"active": supplier.is_active})
+    return redirect(url_for("admin.suppliers"))
 
 
-@bp.get(f"{ADMIN_BASE}/security")
-@admin_required("reports.view")
-def security():
-    users = User.query.filter_by(business_id=current_user.business_id).all()
-    logs = AuditLog.query.filter_by(business_id=current_user.business_id).order_by(AuditLog.created_at.desc()).limit(100).all()
-    return render_template("admin/security.html", users=users, logs=logs)
-
-
-@bp.get(f"{ADMIN_BASE}/backups")
-@admin_required("backup.create")
-def backups():
-    latest = AuditLog.query.filter_by(business_id=current_user.business_id, action="DATABASE_BACKUP_CREATED").order_by(AuditLog.created_at.desc()).limit(25).all()
-    return render_template("admin/backups.html", latest=latest)
-
-
-@bp.get(f"{ADMIN_BASE}/export.json")
-@admin_required("backup.create")
-def export_json():
-    payload = export_database_json()
-    audit("DATABASE_BACKUP_CREATED", "Business", current_user.business_id, new_values={"format": "json"})
-    return Response(json.dumps(payload, default=str), mimetype="application/json",
-                    headers={"Content-Disposition": "attachment; filename=denmart-backup.json"})
-
-
-@bp.get(f"{ADMIN_BASE}/export.sqlite")
-@admin_required("backup.create")
-def export_sqlite():
-    from tempfile import NamedTemporaryFile
-    with NamedTemporaryFile(suffix=".sqlite", delete=False) as fh:
-        path = fh.name
-    try:
-        create_sqlite_snapshot(path)
-        data = Path(path).read_bytes()
-    finally:
-        Path(path).unlink(missing_ok=True)
-    audit("DATABASE_BACKUP_CREATED", "Business", current_user.business_id, new_values={"format": "sqlite"})
-    return send_file(
-        BytesIO(data),
-        mimetype="application/x-sqlite3",
-        as_attachment=True,
-        download_name="denmart-backup.sqlite",
-        max_age=0,
-    )
-
-
-@bp.post(f"{ADMIN_BASE}/restore/json")
-@admin_required("backup.restore")
-def restore_json():
-    upload = request.files.get("backup_file")
-    if request.form.get("confirm") != "RESTORE" or not upload or not upload.filename.lower().endswith(".json"):
-        flash("Choose a Denmart JSON backup file.", "error")
-        return redirect(url_for("admin.backups"))
-    try:
-        payload = json.loads(upload.read().decode("utf-8"))
-        restore_database_json(payload)
-        from flask_login import logout_user
-        logout_user()
-        session.clear()
-        flash("JSON backup restored. Sign in again to continue.", "success")
-    except Exception as exc:
-        db.session.rollback()
-        flash(f"JSON restore failed: {exc}", "error")
-    return redirect(url_for("admin.backups"))
-
-
-@bp.post(f"{ADMIN_BASE}/restore/sqlite")
-@admin_required("backup.restore")
-def restore_sqlite():
-    upload = request.files.get("backup_file")
-    if request.form.get("confirm") != "RESTORE" or not upload or not upload.filename.lower().endswith((".sqlite", ".db")):
-        flash("Choose a Denmart SQLite backup file.", "error")
-        return redirect(url_for("admin.backups"))
-    from tempfile import NamedTemporaryFile
-    with NamedTemporaryFile(suffix=".sqlite", delete=False) as fh:
-        path = fh.name
-        upload.save(path)
-    try:
-        restore_sqlite_snapshot(path)
-        from flask_login import logout_user
-        logout_user()
-        session.clear()
-        flash("SQLite backup restored. Sign in again to continue.", "success")
-    except Exception as exc:
-        db.session.rollback()
-        flash(f"SQLite restore failed: {exc}", "error")
-    finally:
-        Path(path).unlink(missing_ok=True)
-    return redirect(url_for("admin.backups"))
-
-
-@bp.post(f"{ADMIN_BASE}/settings/test-daraja")
-@admin_required("reports.view")
-def test_daraja():
-    business = db.session.get(Business, current_user.business_id)
-    integration = PaymentIntegration.query.filter_by(business_id=business.id, provider="SAFARICOM").first()
-    if not integration:
-        flash("Save the Daraja credentials first.", "error")
-        return redirect(url_for("admin.settings"))
-    try:
-        from services.payments.daraja import DarajaProvider
-        provider = DarajaProvider(decrypt(integration.consumer_key_encrypted) or "", decrypt(integration.consumer_secret_encrypted) or "",
-                                   decrypt(integration.shortcode_encrypted) or "", decrypt(integration.passkey_encrypted) or "",
-                                   integration.environment or "sandbox", integration.callback_url or "")
-        provider.access_token()
-        integration.last_tested_at = now()
-        db.session.commit()
-        flash("Daraja credentials accepted by the selected environment.", "success")
-    except Exception as exc:
-        db.session.rollback()
-        flash(f"Daraja connection test failed: {exc}", "error")
-    return redirect(url_for("admin.settings"))
-
-
-@bp.get(f"{ADMIN_BASE}/audit")
-@admin_required("reports.view")
-def audit_page():
-    logs = AuditLog.query.filter_by(business_id=current_user.business_id).order_by(AuditLog.created_at.desc()).limit(500).all()
-    return render_template("admin/audit.html", logs=logs)
-
-
-@bp.post(f"{ADMIN_BASE}/settings/till")
-@admin_required("reports.view")
-def save_till():
-    business = db.session.get(Business, current_user.business_id)
-    till_number = request.form.get("till_number", "").strip()
-    setting = SystemSetting.query.filter_by(business_id=business.id, key="mpesa_till_number").first()
-    if till_number:
-        if not till_number.isdigit() or not (5 <= len(till_number) <= 10):
-            flash("Enter a valid M-PESA Till number.", "error")
-            return redirect(url_for("admin.settings"))
-        if not setting:
-            setting = SystemSetting(business_id=business.id, key="mpesa_till_number", value=till_number)
-            db.session.add(setting)
-        else:
-            setting.value = till_number
-        db.session.commit()
-        flash("M-PESA Till number saved.", "success")
-    else:
-        if setting:
-            db.session.delete(setting)
-            db.session.commit()
-        flash("M-PESA Till number cleared.", "success")
-    return redirect(url_for("admin.settings"))
-
-
-@bp.get(f"{ADMIN_BASE}/settings")
-@bp.post(f"{ADMIN_BASE}/settings")
-@admin_required("reports.view")
-def settings():
-    business = db.session.get(Business, current_user.business_id)
-    integration = PaymentIntegration.query.filter_by(business_id=business.id, provider="SAFARICOM").first()
+@bp.route(f"{ADMIN_BASE}/purchases", methods=["GET", "POST"])
+@admin_required("inventory.view")
+def purchases():
+    business_id = current_user.business_id
+    stores = Store.query.filter_by(business_id=business_id).order_by(Store.name).all()
+    suppliers = Supplier.query.filter_by(business_id=business_id, is_active=True).order_by(Supplier.name).all()
+    products = Product.query.filter_by(status="ACTIVE").order_by(Product.name).limit(1500).all()
     if request.method == "POST":
-        business.name = request.form.get("business_name", business.name).strip() or business.name
-        footer = request.form.get("footer_text", "All rights reserved · Denmart Merchants").strip()
-        logo_file = request.files.get("business_logo")
-        if logo_file and logo_file.filename:
-            raw_logo = logo_file.read(2 * 1024 * 1024 + 1)
-            try:
-                if len(raw_logo) > 2 * 1024 * 1024:
-                    raise ValueError("Logo is larger than 2 MB.")
-                image = Image.open(BytesIO(raw_logo))
-                if image.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
-                    raise ValueError("Use a PNG, JPG, WEBP or GIF logo.")
-                image = image.convert("RGBA")
-                image.thumbnail((768, 768), Image.Resampling.LANCZOS)
-                out = BytesIO()
-                image.save(out, format="PNG", optimize=True)
-                encoded = base64.b64encode(out.getvalue()).decode("ascii")
-                if len(encoded) > 1_500_000:
-                    raise ValueError("Logo is still too large after optimization; use a smaller image.")
-                business.logo_url = f"data:image/png;base64,{encoded}"
-                flash("Business logo updated. The same logo will be used for the PWA app icon.", "success")
-            except Exception as exc:
-                flash(str(exc), "error")
-        if request.form.get("remove_logo") == "1":
-            business.logo_url = None
-            flash("Business logo removed; the default Denmart app icon will be used.", "success")
-        setting = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first()
-        if not setting:
-            setting = SystemSetting(business_id=business.id, key="footer_text", value=footer); db.session.add(setting)
-        else: setting.value = footer
-        def save_setting(key, value):
-            setting = SystemSetting.query.filter_by(business_id=business.id, key=key).first()
-            if not setting:
-                db.session.add(SystemSetting(business_id=business.id, key=key, value=str(value)))
-            else:
-                setting.value = str(value)
-        if any(k in request.form for k in ("delivery_enabled", "bike_base_fee", "bike_per_km")):
-            try:
-                bike_base = Decimal(request.form.get("bike_base_fee", "100"))
-                bike_km = Decimal(request.form.get("bike_per_km", "20"))
-                if bike_base < 0 or bike_km < 0: raise InvalidOperation
-                save_setting("delivery_bike_base_fee", bike_base)
-                save_setting("delivery_bike_per_km", bike_km)
-                save_setting("delivery_enabled", "1" if request.form.get("delivery_enabled") == "1" else "0")
-            except InvalidOperation:
-                flash("Delivery fees must be valid non-negative amounts.", "error")
-        if "loyalty_points_per_100" in request.form:
-            try:
-                points_rate = max(0, int(request.form.get("loyalty_points_per_100", "1")))
-                save_setting("loyalty_points_per_100", points_rate)
-            except (TypeError, ValueError):
-                flash("Loyalty points rate must be a whole number.", "error")
-        if request.form.get("save_mpesa"):
-            if not integration:
-                integration = PaymentIntegration(business_id=business.id, provider="SAFARICOM")
-                db.session.add(integration)
-            integration.environment = request.form.get("environment", "sandbox")
-            integration.callback_url = request.form.get("callback_url", "").strip() or url_for("api.mpesa_callback", _external=True)
-            requested_active = request.form.get("mpesa_active") == "1"
-            required = [request.form.get("consumer_key", "").strip() or decrypt(integration.consumer_key_encrypted or ""),
-                        request.form.get("consumer_secret", "").strip() or decrypt(integration.consumer_secret_encrypted or ""),
-                        request.form.get("shortcode", "").strip() or decrypt(integration.shortcode_encrypted or ""),
-                        request.form.get("passkey", "").strip() or decrypt(integration.passkey_encrypted or "")]
-            transaction_type = request.form.get("transaction_type", "CustomerPayBillOnline")
-            integration.is_active = requested_active and all(required) and integration.callback_url.startswith("https://")
-            extra = {"transaction_type": transaction_type}
-            for field, form_name in [("consumer_key_encrypted","consumer_key"),("consumer_secret_encrypted","consumer_secret"),("shortcode_encrypted","shortcode"),("passkey_encrypted","passkey")]:
-                value = request.form.get(form_name, "").strip()
-                if value: setattr(integration, field, encrypt(value))
-            integration.other_credentials_encrypted = encrypt(json.dumps(extra))
-        db.session.commit()
-        if request.form.get("save_mpesa") and request.form.get("mpesa_active") == "1" and not integration.is_active:
-            flash("M-PESA was saved but remains inactive until all credentials and a public HTTPS callback URL are present.", "error")
-        else:
-            flash("Settings saved.", "success")
-    setting = SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first()
-    callback = integration.callback_url if integration and integration.callback_url else url_for("api.mpesa_callback", _external=True)
-    transaction_type = "CustomerPayBillOnline"
-    till_number = ""
-    if integration and integration.other_credentials_encrypted:
+        store = db.session.get(Store, request.form.get("store_id", ""))
+        supplier = db.session.get(Supplier, request.form.get("supplier_id", ""))
+        product = db.session.get(Product, request.form.get("product_id", ""))
         try:
-            extra = json.loads(decrypt(integration.other_credentials_encrypted) or "{}")
-            transaction_type = extra.get("transaction_type", transaction_type)
-        except Exception:
-            pass
-    till_setting = SystemSetting.query.filter_by(business_id=business.id, key="mpesa_till_number").first()
-    till_number = str(till_setting.value or "").strip() if till_setting else ""
-    bike_base_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_bike_base_fee").first()
-    bike_km_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_bike_per_km").first()
-    delivery_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_enabled").first()
-    loyalty_setting = SystemSetting.query.filter_by(business_id=business.id, key="loyalty_points_per_100").first()
-    return render_template("admin/settings.html", business=business, integration=integration,
-                           footer_text=setting.value if setting else "All rights reserved · Denmart Merchants",
-                           callback_url=callback, transaction_type=transaction_type, till_number=till_number,
-                           bike_base_fee=bike_base_setting.value if bike_base_setting else "100",
-                           bike_per_km=bike_km_setting.value if bike_km_setting else "20",
-                           delivery_enabled=(delivery_setting.value if delivery_setting else "1") == "1",
-                           loyalty_points_per_100=loyalty_setting.value if loyalty_setting else "1")
+            qty = Decimal(request.form.get("quantity", "0")); unit_cost = Decimal(request.form.get("unit_cost", "0")); tax = Decimal(request.form.get("tax", "0") or "0")
+        except InvalidOperation:
+            qty = Decimal("0"); unit_cost = Decimal("0"); tax = Decimal("0")
+        if not store or store.business_id != business_id or not supplier or supplier.business_id != business_id or not product or qty <= 0 or unit_cost < 0 or tax < 0:
+            flash("Select valid mart, supplier, product, quantity and cost.", "error")
+        else:
+            subtotal = qty * unit_cost
+            ref = f"PO-{now().strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
+            po = PurchaseOrder(business_id=business_id, store_id=store.id, supplier_id=supplier.id, reference_number=ref,
+                               status="ORDERED", subtotal=subtotal, tax=tax, total=subtotal + tax, created_by=current_user.id)
+            db.session.add(po); db.session.flush()
+            db.session.add(PurchaseOrderItem(purchase_order_id=po.id, product_id=product.id, quantity=qty, unit_cost=unit_cost, tax=tax, total=subtotal + tax))
+            db.session.commit(); audit("PURCHASE_ORDER_CREATED", "PurchaseOrder", po.id, new_values={"reference": ref, "total": str(po.total)})
+            flash(f"Purchase order {ref} created.", "success")
+            return redirect(url_for("admin.purchases"))
+    rows = PurchaseOrder.query.filter_by(business_id=business_id).order_by(PurchaseOrder.created_at.desc()).limit(250).all()
+    items = {}
+    for po in rows:
+        items[po.id] = PurchaseOrderItem.query.filter_by(purchase_order_id=po.id).all()
+    stores_map = {s.id: s.name for s in stores}; suppliers_map = {s.id: s.name for s in suppliers}
+    product_map = {p.id: p.name for p in products}
+    return render_template("admin/purchases.html", purchases=rows, stores=stores, suppliers=suppliers, products=products, items=items,
+                           stores_map=stores_map, suppliers_map=suppliers_map, product_map=product_map)
+
+
+@bp.post(f"{ADMIN_BASE}/purchases/<purchase_id>/receive")
+@admin_required("inventory.adjust")
+def receive_purchase(purchase_id):
+    po = db.session.get(PurchaseOrder, purchase_id)
+    if not po or po.business_id != current_user.business_id:
+        return "Not found", 404
+    if po.status == "RECEIVED":
+        flash("That purchase order is already received.", "error")
+        return redirect(url_for("admin.purchases"))
+    if po.status == "CANCELLED":
+        flash("Cancelled purchase orders cannot be received.", "error")
+        return redirect(url_for("admin.purchases"))
+    lines = PurchaseOrderItem.query.filter_by(purchase_order_id=po.id).all()
+    for line in lines:
+        sp = StoreProduct.query.filter_by(store_id=po.store_id, product_id=line.product_id).first()
+        if not sp:
+            sp = StoreProduct(store_id=po.store_id, product_id=line.product_id, stock_quantity=0, reserved_quantity=0,
+                              cost_price=line.unit_cost, selling_price=Decimal("0"), minimum_price=0,
+                              is_available=False, available_online=False, available_pos=False)
+            db.session.add(sp); db.session.flush()
+        sp.stock_quantity = Decimal(sp.stock_quantity or 0) + Decimal(line.quantity)
+        sp.cost_price = Decimal(line.unit_cost)
+        db.session.add(InventoryTransaction(store_id=po.store_id, product_id=line.product_id, transaction_type="PURCHASE",
+                                            quantity=Decimal(line.quantity), unit_cost=Decimal(line.unit_cost), reference_type="PURCHASE_ORDER",
+                                            reference_id=po.id, created_by=current_user.id, notes=po.reference_number))
+    po.status = "RECEIVED"
+    db.session.commit(); audit("PURCHASE_RECEIVED", "PurchaseOrder", po.id, new_values={"status": po.status})
+    flash(f"{po.reference_number} received and stock updated.", "success")
+    return redirect(url_for("admin.purchases"))
+
+
+@bp.get(f"{ADMIN_BASE}/customers")
+@admin_required("reports.view")
+def customers():
+    business_id = current_user.business_id
+    q = (request.args.get("q") or "").strip()
+    query = Customer.query.filter_by(business_id=business_id)
+    if q:
+        needle = f"%{q}%"
+        query = query.filter(or_(Customer.name.ilike(needle), Customer.phone.ilike(needle), Customer.email.ilike(needle)))
+    rows = query.order_by(Customer.created_at.desc()).limit(500).all()
+    customer_ids = [c.id for c in rows]
+    if not customer_ids:
+        return render_template("admin/customers.html", rows=[], q=q)
+    order_stats = db.session.query(
+        Order.customer_id,
+        db.func.count(Order.id),
+        db.func.coalesce(db.func.sum(case((Order.payment_status == "PAID", Order.total), else_=0)), 0),
+    ).filter(Order.business_id == business_id, Order.customer_id.in_(customer_ids)).group_by(Order.customer_id).all()
+    order_map = {cid: (int(count), Decimal(str(paid or 0))) for cid, count, paid in order_stats}
+    loyalty_rows = LoyaltyAccount.query.filter(LoyaltyAccount.business_id == business_id, LoyaltyAccount.customer_id.in_(customer_ids)).all()
+    loyalty_map = {a.customer_id: a for a in loyalty_rows}
+    data = []
+    for customer in rows:
+        count, paid = order_map.get(customer.id, (0, Decimal("0")))
+        account = loyalty_map.get(customer.id)
+        data.append({"customer": customer, "orders": count, "paid": paid,
+                     "points": account.points_balance if account else 0,
+                     "lifetime_points": account.lifetime_points if account else 0})
+    return render_template("admin/customers.html", rows=data, q=q)
+
+
+@bp.post(f"{ADMIN_BASE}/customers/<customer_id>/loyalty")
+@admin_required("reports.view")
+def adjust_loyalty(customer_id):
+    customer = db.session.get(Customer, customer_id)
+    if not customer or customer.business_id != current_user.business_id:
+        return "Not found", 404
+    try:
+        points = int(request.form.get("points", "0"))
+    except (TypeError, ValueError):
+        points = 0
+    if not points or abs(points) > 100000:
+        flash("Enter a non-zero adjustment of up to 100,000 points.", "error")
+        return redirect(url_for("admin.customers"))
+    account = LoyaltyAccount.query.filter_by(business_id=current_user.business_id, customer_id=customer.id).first()
+    if not account:
+        account = LoyaltyAccount(business_id=current_user.business_id, customer_id=customer.id, points_balance=0, lifetime_points=0)
+        db.session.add(account); db.session.flush()
+    new_balance = account.points_balance + points
+    if new_balance < 0:
+        flash("Loyalty balance cannot go below zero.", "error")
+        return redirect(url_for("admin.customers"))
+    account.points_balance = new_balance
+    if points > 0:
+        account.lifetime_points += points
+    db.session.add(LoyaltyTransaction(business_id=current_user.business_id, customer_id=customer.id, points=points,
+                                      transaction_type="ADJUSTMENT", note="Administrator loyalty adjustment"))
+    db.session.commit(); audit("LOYALTY_ADJUSTED", "Customer", customer.id, new_values={"points": points, "balance": new_balance})
+    flash(f"{customer.name}: loyalty balance is now {new_balance} points.", "success")
+    return redirect(url_for("admin.customers"))
+
+
+@bp.get(f"{ADMIN_BASE}/shifts")
+@admin_required("reports.view")
+def shifts():
+    business_id = current_user.business_id
+    rows = (Shift.query.join(Store, Store.id == Shift.store_id).join(User, User.id == Shift.cashier_id)
+            .filter(Store.business_id == business_id).order_by(Shift.opened_at.desc()).limit(300).all())
+    stores = {s.id: s for s in Store.query.filter_by(business_id=business_id).all()}
+    users = {u.id: u for u in User.query.filter_by(business_id=business_id).all()}
+    return render_template("admin/shifts.html", shifts=rows, store_map=stores, user_map=users)
+
+
+@bp.get(f"{ADMIN_BASE}/reports")
+@admin_required("reports.view")
+def reports():
+    business_id = current_user.business_id
+    try:
+        days = max(7, min(90, int(request.args.get("days", "30"))))
+    except (TypeError, ValueError):
+        days = 30
+    since = now() - timedelta(days=days)
+    daily = {}
+    def day_row(key):
+        return daily.setdefault(key, {"pos": Decimal("0"), "online": Decimal("0"), "mpesa": Decimal("0"), "cash": Decimal("0"), "card": Decimal("0"), "items": Decimal("0")})
+
+    sale_daily = db.session.query(
+        db.func.date(Sale.created_at),
+        db.func.coalesce(db.func.sum(Sale.total), 0),
+        db.func.coalesce(db.func.sum(SaleItem.quantity), 0),
+    ).join(SaleItem, SaleItem.sale_id == Sale.id).filter(
+        Sale.business_id == business_id, Sale.payment_status == "PAID", Sale.created_at >= since
+    ).group_by(db.func.date(Sale.created_at)).all()
+    for key, amount, items in sale_daily:
+        d = day_row(str(key)); d["pos"] += Decimal(str(amount or 0)); d["items"] += Decimal(str(items or 0))
+
+    order_daily = db.session.query(
+        db.func.date(Order.created_at),
+        db.func.coalesce(db.func.sum(Order.total), 0),
+        db.func.coalesce(db.func.sum(OrderItem.quantity), 0),
+    ).join(OrderItem, OrderItem.order_id == Order.id).filter(
+        Order.business_id == business_id, Order.payment_status == "PAID", Order.created_at >= since
+    ).group_by(db.func.date(Order.created_at)).all()
+    for key, amount, items in order_daily:
+        d = day_row(str(key)); d["online"] += Decimal(str(amount or 0)); d["items"] += Decimal(str(items or 0))
+
+    payment_daily = db.session.query(
+        db.func.date(Payment.created_at), Payment.method, db.func.coalesce(db.func.sum(Payment.amount), 0)
+    ).filter(Payment.business_id == business_id, Payment.status == "PAID", Payment.created_at >= since).group_by(
+        db.func.date(Payment.created_at), Payment.method
+    ).all()
+    for key, method, amount in payment_daily:
+        d = day_row(str(key)); method = (method or "OTHER").upper(); amount = Decimal(str(amount or 0))
+        if method in {"MPESA", "MPESA_TILL", "MPESA_GATEWAY", "MPESA_SMS"}: d["mpesa"] += amount
+        elif method == "CASH": d["cash"] += amount
+        elif method == "CARD": d["card"] += amount
+
+    daily_rows = [{"date": k, **v, "total": v["pos"] + v["online"]} for k, v in sorted(daily.items(), reverse=True)]
+
+    sales_product = db.session.query(
+        SaleItem.product_id, SaleItem.product_name_snapshot,
+        db.func.coalesce(db.func.sum(SaleItem.quantity), 0), db.func.coalesce(db.func.sum(SaleItem.line_total), 0)
+    ).join(Sale, Sale.id == SaleItem.sale_id).filter(
+        Sale.business_id == business_id, Sale.payment_status == "PAID", Sale.created_at >= since
+    ).group_by(SaleItem.product_id, SaleItem.product_name_snapshot).all()
+    order_product = db.session.query(
+        OrderItem.product_id, OrderItem.product_name_snapshot,
+        db.func.coalesce(db.func.sum(OrderItem.quantity), 0), db.func.coalesce(db.func.sum(OrderItem.line_total), 0)
+    ).join(Order, Order.id == OrderItem.order_id).filter(
+        Order.business_id == business_id, Order.payment_status == "PAID", Order.created_at >= since
+    ).group_by(OrderItem.product_id, OrderItem.product_name_snapshot).all()
+    top_products_map = {}
+    for product_id, name, qty, amount in sales_product + order_product:
+        key = product_id or name
+        entry = top_products_map.setdefault(key, {"name": name, "qty": Decimal("0"), "sales": Decimal("0")})
+        entry["qty"] += Decimal(str(qty or 0)); entry["sales"] += Decimal(str(amount or 0))
+    top_products = sorted(top_products_map.values(), key=lambda x: x["sales"], reverse=True)[:15]
+
+    return render_template("admin/reports.html", days=days, daily_rows=daily_rows, top_products=top_products,
+                           total_sales=sum((r["total"] for r in daily_rows), Decimal("0")),
+                           total_mpesa=sum((r["mpesa"] for r in daily_rows), Decimal("0")),
+                           total_items=sum((r["items"] for r in daily_rows), Decimal("0")))
+

@@ -55,7 +55,8 @@ def create_app():
 
     @app.context_processor
     def inject_globals():
-        business = Business.query.first()
+        business = (current_user.business if current_user.is_authenticated and getattr(current_user, "business", None)
+                    else Business.query.first())
         footer_setting = (SystemSetting.query.filter_by(business_id=business.id, key="footer_text").first() if business else None)
         footer = footer_setting.value if footer_setting else "All rights reserved · Denmart Merchants"
         return {
