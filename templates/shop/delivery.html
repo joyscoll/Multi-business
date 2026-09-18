@@ -2,7 +2,7 @@
 <section class="confirmation delivery-page">
   <div class="eyebrow">ORDER {{order.order_number}}</div>
   {% if existing %}
-    <div class="confirm-mark">✓</div><h1>Delivery request received.</h1>
+    <div class="confirm-mark"></div><h1>Delivery request received.</h1>
     <p>Your order is in the delivery queue. Denmart can update the request from the operations side.</p>
     <div class="order-status-box"><div><span>SERVICE</span><strong>Bike delivery</strong></div><div><span>STATUS</span><strong>{{existing.status.replace('_',' ').title()}}</strong></div></div>
     <div class="delivery-detail-card"><span>Destination</span><strong>{{order.delivery_address}}</strong><span>Estimated charge</span><strong>{{currency}} {{'%.0f'|format(order.delivery_fee|float)}}</strong><small>{{existing.notes}}</small></div>

@@ -72,3 +72,11 @@ The Android gateway supplies the SIM slot, device ID, transaction ID, amount, cu
 
 SQLite backups use a real attachment response with `as_attachment=True` and are available from **Control → Backups**.
 
+
+
+Backup guarantees
+------------------
+- JSON restore accepts Real Mart JSON backups by content, including UTF-8 BOM files and normal browser MIME variations.
+- SQLite export streams every table in bounded batches, writes a manifest, verifies row counts, runs SQLite integrity and foreign-key checks, then streams the verified file to the browser.
+- SQLite restore validates integrity and requires every current application table before replacing the live database.
+- Uploaded product images stored inside database records are included automatically in both database backup formats. External image URLs remain URLs.

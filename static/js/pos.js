@@ -79,7 +79,7 @@ async function refreshMpesaFeed(){
     const ref=e.order_number?`Order ${e.order_number}`:(e.receipt_number?`Receipt ${e.receipt_number}`:(e.transaction||'M-PESA'));
     const progress=e.received_amount!=null ? ` · ${money(e.received_amount)}/${money(e.required_amount)}` : '';
     const state=e.status==='MATCHED' ? (e.outstanding_amount>0?'PART':'PAID') : 'WAIT';
-    headline.textContent=`${e.status==='MATCHED'?'✓':'•'} ${money(e.amount)} · ${state} · ${ref}`;
+    headline.textContent=`${e.status==='MATCHED'?'':'•'} ${money(e.amount)} · ${state} · ${ref}`;
     headline.title=`${e.customer||'M-PESA customer'} · ${e.payment_label||'Received'}${progress}${e.outstanding_amount!=null&&Number(e.outstanding_amount)>0?` · Remaining ${money(e.outstanding_amount)}`:''}`;
     if(e.transaction && e.transaction!==lastMpesaTransaction){ lastMpesaTransaction=e.transaction; if(e.status==='MATCHED') beep(true); }
   }catch(e){}
@@ -119,7 +119,7 @@ function paintMpesaPaymentCard(d, receiptNumber){
   const outstanding=Math.max(0,Number(d.outstanding_amount ?? (total-received)));
   el.hidden=false;
   if(d.status==='PAID'){
-    el.innerHTML=`<div class="mpesa-card-state ok">✓ M-PESA PAYMENT COMPLETE</div><strong>${money(received)}</strong><small>${esc(receiptNumber)} · Fully paid</small>`;
+    el.innerHTML=`<div class="mpesa-card-state ok"> M-PESA PAYMENT COMPLETE</div><strong>${money(received)}</strong><small>${esc(receiptNumber)} · Fully paid</small>`;
   } else if(received>0){
     el.innerHTML=`<div class="mpesa-card-state partial">◔ PART PAYMENT RECEIVED</div><strong>${money(received)} / ${money(total)}</strong><small>${esc(receiptNumber)} · Remaining ${money(outstanding)} · Ask customer to pay the balance</small>`;
   } else {

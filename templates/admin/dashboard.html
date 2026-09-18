@@ -7,11 +7,11 @@
     <div class="control-brand"><span class="brand-mark">DM</span><div><strong>{{business_name}}</strong><small>Admin dashboard</small></div></div>
     <nav>
       <a class="active" href="/control">Overview</a>
-      <a href="/control/payment-gateway">💳 Payment monitor</a>
+      <a href="/control/payment-gateway"> Payment monitor</a>
       <a href="/control/orders">Online orders</a>
       <a href="/control/products">Products & visibility</a>
       <a href="/control/categories">Categories</a>
-      <a href="/scan">📷 Scan stock</a>
+      <a href="/scan"> Scan stock</a>
       <a href="/control/inventory">Inventory</a>
       <a href="/control/purchases">Purchasing</a>
       <a href="/control/customers">Customers & loyalty</a>
@@ -43,16 +43,39 @@
       <div class="control-card"><span>Low stock</span><strong>{{low_stock}}</strong><small>Items at or below reorder level</small></div>
     </div>
 
-    <div class="admin-launch-row">
-      <a class="admin-launch primary" href="/control/payment-gateway"><strong>💳 M-PESA payment monitor</strong><span>{{gateway_received_count}} today · KES {{'%.2f'|format(gateway_received_total|float)}} received · {{gateway_unmatched_count}} unmatched</span></a>
-      <a class="admin-launch" href="/control/orders"><strong>Online orders</strong><span>{{pending_payment_approvals}} payments awaiting approval · {{pending_orders}} awaiting fulfilment</span></a>
-      <a class="admin-launch" href="/control/inventory"><strong>Inventory control</strong><span>{{low_stock}} low-stock rows · {{reserved_units}} units currently reserved</span></a>
-      <a class="admin-launch" href="/control/purchases"><strong>Purchasing</strong><span>{{purchase_open}} open purchase orders · {{supplier_count}} active suppliers</span></a>
-      <a class="admin-launch" href="/control/customers"><strong>Customers & loyalty</strong><span>{{customers_count}} active customers · {{loyalty_points}} loyalty points held</span></a>
-      <a class="admin-launch" href="/control/reports"><strong>Reports & analytics</strong><span>Trends, channels, products and daily performance</span></a>
-      <a class="admin-launch" href="/control/daily-report"><strong>Daily closing report</strong><span>Cash, M-PESA, card, online, stock cost and profit</span></a>
-      <a class="admin-launch" href="/control/products"><strong>Catalogue</strong><span>1322 seeded identities · {{image_missing}} still need an exact product photo</span></a>
-      <a class="admin-launch" href="/control/settings"><strong>M-PESA & settings</strong><span>Daraja, Till, delivery, loyalty and business identity</span></a>
+    <div class="admin-quick-groups">
+      <details class="admin-quick-group" open>
+        <summary>Payments and orders</summary>
+        <div class="admin-launch-row">
+          <a class="admin-launch primary" href="/control/payment-gateway"><strong>M-PESA payment monitor</strong><span>{{gateway_received_count}} today · KES {{'%.2f'|format(gateway_received_total|float)}} received · {{gateway_unmatched_count}} unmatched</span></a>
+          <a class="admin-launch" href="/control/orders"><strong>Online orders</strong><span>{{pending_payment_approvals}} payments awaiting approval · {{pending_orders}} awaiting fulfilment</span></a>
+          <a class="admin-launch" href="/control/daily-report"><strong>Daily closing report</strong><span>Cash, M-PESA, card, online, stock cost and profit</span></a>
+        </div>
+      </details>
+      <details class="admin-quick-group" open>
+        <summary>Catalogue and stock</summary>
+        <div class="admin-launch-row">
+          <a class="admin-launch" href="/control/products"><strong>Catalogue</strong><span>1322 seeded identities · {{image_missing}} still need an exact product photo</span></a>
+          <a class="admin-launch" href="/control/inventory"><strong>Inventory control</strong><span>{{low_stock}} low-stock rows · {{reserved_units}} units currently reserved</span></a>
+          <a class="admin-launch" href="/control/purchases"><strong>Purchasing</strong><span>{{purchase_open}} open purchase orders · {{supplier_count}} active suppliers</span></a>
+        </div>
+      </details>
+      <details class="admin-quick-group">
+        <summary>People and performance</summary>
+        <div class="admin-launch-row">
+          <a class="admin-launch" href="/control/customers"><strong>Customers and loyalty</strong><span>{{customers_count}} active customers · {{loyalty_points}} loyalty points held</span></a>
+          <a class="admin-launch" href="/control/reports"><strong>Reports and analytics</strong><span>Trends, channels, products and daily performance</span></a>
+          <a class="admin-launch" href="/control/users"><strong>Staff and access</strong><span>Manage staff accounts, roles and mart access</span></a>
+        </div>
+      </details>
+      <details class="admin-quick-group">
+        <summary>System and protection</summary>
+        <div class="admin-launch-row">
+          <a class="admin-launch" href="/control/settings"><strong>Settings and M-PESA</strong><span>Daraja, Till, delivery, loyalty and business identity</span></a>
+          <a class="admin-launch" href="/control/backups"><strong>Backups</strong><span>Complete JSON and SQLite snapshots with verified restore support</span></a>
+          <a class="admin-launch" href="/scan"><strong>Scan stock</strong><span>Scan barcodes instead of typing long product codes</span></a>
+        </div>
+      </details>
     </div>
 
     <section class="control-panel dashboard-day-panel">

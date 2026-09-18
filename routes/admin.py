@@ -9,7 +9,7 @@ from io import BytesIO
 from PIL import Image, ImageOps
 from pathlib import Path
 from functools import wraps
-from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session, send_file, jsonify
+from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session, send_file, jsonify, after_this_request
 from flask_login import current_user, login_required
 from sqlalchemy import or_, case
 from extensions import db
@@ -1695,14 +1695,35 @@ def export_sqlite():
     tmp.close()
     path = Path(tmp.name)
     try:
+        # Build and verify the complete snapshot before opening it to the browser.
         create_sqlite_snapshot(path)
         audit("BACKUP_SQLITE_EXPORTED", "Business", current_user.business_id, new_values={"format": "sqlite"})
-        data = path.read_bytes()
-        return send_file(BytesIO(data), mimetype="application/vnd.sqlite3", as_attachment=True,
-                         download_name=f"real-mart-backup-{now().strftime('%Y%m%d-%H%M%S')}.sqlite")
-    finally:
-        try: path.unlink(missing_ok=True)
-        except Exception: pass
+
+        @after_this_request
+        def cleanup(response):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                current_app.logger.warning("Could not remove temporary SQLite backup %s", path)
+            return response
+
+        return send_file(
+            path,
+            mimetype="application/vnd.sqlite3",
+            as_attachment=True,
+            conditional=True,
+            etag=False,
+            max_age=0,
+            download_name=f"real-mart-backup-{now().strftime('%Y%m%d-%H%M%S')}.sqlite",
+        )
+    except Exception as exc:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        current_app.logger.exception("SQLite backup generation failed")
+        flash(f"SQLite backup could not be generated: {str(exc)[:220]}", "error")
+        return redirect(url_for("admin.backups"))
 
 
 @bp.post(f"{ADMIN_BASE}/restore/json")
@@ -1713,7 +1734,13 @@ def restore_json():
         flash("Choose a backup and confirm RESTORE before importing.", "error")
         return redirect(url_for("admin.backups"))
     try:
-        payload = json.load(upload.stream)
+        raw = upload.stream.read()
+        if not raw:
+            raise ValueError("The selected backup file is empty.")
+        # UTF-8 BOMs and filename extensions are both accepted; the content is
+        # the authority, so files exported by Real Mart are accepted regardless
+        # of browser-provided MIME type or filename casing.
+        payload = json.loads(raw.decode("utf-8-sig"))
         restore_database_json(payload)
         session.clear()
         flash("JSON backup restored. Sign in again with the restored credentials.", "success")

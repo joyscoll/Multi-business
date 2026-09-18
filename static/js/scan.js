@@ -276,7 +276,7 @@
         ? `${fmtNumber(data.product.added)} added. Stock is now ${fmtNumber(data.product.stock)} at ${data.product.store}.`
         : `Saved to the database. Stock was left unchanged at ${fmtNumber(data.product.stock)}.`;
       showMessage(`${data.product.name}: ${stockMessage}`, 'success');
-      setStatus('Saved ✓', 'ok');
+      setStatus('Saved ', 'ok');
       await loadRecent();
       barcodeInput.value = '';
       currentBarcode = '';

@@ -76,7 +76,7 @@
     const input=document.getElementById('gatewayUrl');
     try { await navigator.clipboard.writeText(input.value); } catch(e) { input.select(); document.execCommand('copy'); }
     const b=document.querySelector('.gateway-url-row button');
-    const old=b.textContent; b.textContent='Copied ✓'; setTimeout(()=>b.textContent=old,1200);
+    const old=b.textContent; b.textContent='Copied '; setTimeout(()=>b.textContent=old,1200);
   };
 
   async function refreshGateway(){
