@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+{% block body_class %}admin-page{% endblock %}
+{% block chrome %}{% endblock %}
+{% block content %}
+<div class="control-shell">
+  <aside class="control-sidebar">
+    <div class="control-brand"><span class="brand-mark">DM</span><div><strong>{{business_name}}</strong><small>Payment gateway</small></div></div>
+    <nav>
+      <a href="/control">Overview</a>
+      <a class="active" href="/control/payment-gateway">💳 Payment monitor</a>
+      <a href="/control/orders">Online orders</a>
+      <a href="/control/products">Products & visibility</a>
+      <a href="/control/stores">Marts</a>
+      <a href="/control/users">Staff & access</a>
+      <a href="/control/expenses">Expenses</a>
+      <a href="/control/settings">M-PESA & settings</a>
+      <a href="/control/backups">Backups</a>
+      <a href="/control/audit">Audit</a>
+    </nav>
+    <div class="control-bottom"><span>MASTER ADMIN</span><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button>Sign out</button></form></div>
+  </aside>
+
+  <main class="control-main gateway-page">
+    <header class="control-header">
+      <div><span class="eyebrow">M-PESA PHONE BRIDGE</span><h1>Payment monitor</h1><p>Live confirmations arriving from the dedicated Android gateway phone.</p></div>
+      <div class="gateway-live"><span class="gateway-dot" id="gatewayPulse"></span><strong id="gatewayLiveText">LIVE</strong><small id="gatewayLast">Waiting for the first message</small></div>
+    </header>
+
+    <section class="gateway-cards">
+      <div class="gateway-card main"><small>RECEIVED TODAY</small><strong id="receivedTotal">KES {{'%.2f'|format(received_total|float)}}</strong><span id="receivedCount">{{received_count}} messages</span></div>
+      <div class="gateway-card"><small>MATCHED</small><strong id="matchedTotal">KES {{'%.2f'|format(matched_total|float)}}</strong><span id="matchedCount">{{matched_count}} payments</span></div>
+      <div class="gateway-card"><small>UNMATCHED</small><strong id="unmatchedTotal">KES {{'%.2f'|format(unmatched_total|float)}}</strong><span id="unmatchedCount">{{unmatched_count}} need attention</span></div>
+    </section>
+
+    <section class="control-panel gateway-setup-panel">
+      <div class="panel-title"><div><span class="eyebrow">ANDROID SETUP</span><h2>One link to paste into the gateway app</h2><p class="muted">The Android app sends its M-PESA messages to this exact URL. Keep the link private.</p></div><span class="admin-badge">HTTPS</span></div>
+      <div class="gateway-url-row">
+        <input id="gatewayUrl" class="admin-input gateway-url-input" readonly value="{{gateway_url}}">
+        <button class="admin-action" type="button" onclick="copyGatewayUrl()">Copy link</button>
+      </div>
+      <form method="post" action="/control/payment-gateway/rotate" onsubmit="return confirm('Rotate the gateway link? The existing Android app will stop delivering until you paste the new link into it.');" style="margin-top:9px">
+        <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+        <button class="admin-action danger-action" type="submit">Rotate gateway link</button>
+      </form>
+    </section>
+
+    <section class="control-panel">
+      <div class="panel-title"><div><span class="eyebrow">SIM ROUTING</span><h2>Keep every line in its own mart</h2><p class="muted">SIM 1 and SIM 2 are identified by the Android phone. Leave a SIM unassigned when it is not a Real Mart payment line.</p></div></div>
+      <form method="post" action="/control/payment-gateway/routing" class="gateway-routing-grid">
+        <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+        <label><strong>SIM 1</strong><span>Android slot 0</span><select class="admin-input wide" name="sim_0_store_id"><option value="">Not assigned</option>{% for s in stores %}<option value="{{s.id}}" {% if routes[0]==s.id %}selected{% endif %}>{{s.name}} · {{s.code}}</option>{% endfor %}</select></label>
+        <label><strong>SIM 2</strong><span>Android slot 1</span><select class="admin-input wide" name="sim_1_store_id"><option value="">Not assigned</option>{% for s in stores %}<option value="{{s.id}}" {% if routes[1]==s.id %}selected{% endif %}>{{s.name}} · {{s.code}}</option>{% endfor %}</select></label>
+        <div><button class="admin-action" type="submit">Save SIM routing</button></div>
+      </form>
+    </section>
+
+    <section class="gateway-store-grid" id="storeTotals"></section>
+
+    <section class="control-panel">
+      <div class="panel-title"><div><span class="eyebrow">LIVE FEED</span><h2>Incoming M-PESA messages</h2></div><span class="muted">Updates automatically</span></div>
+      <div class="table-wrap">
+        <table class="admin-table gateway-table"><thead><tr><th>Time</th><th>Line</th><th>Mart</th><th>Customer</th><th>Transaction</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody id="gatewayFeed">
+        {% for e in events %}
+        <tr><td>{{e.received_at.strftime('%H:%M:%S') if e.received_at else '—'}}</td><td>SIM {{e.sim_slot + 1}}</td><td>{{e.store.name if e.store else 'Unassigned'}}</td><td>{{e.customer or 'M-PESA customer'}}</td><td><code>{{e.transaction_id}}</code></td><td><strong>KES {{'%.2f'|format(e.amount|float)}}</strong></td><td><span class="admin-badge {% if e.status=='MATCHED' %}gateway-ok{% else %}gateway-warn{% endif %}">{{e.status}}</span></td></tr>
+        {% else %}
+        <tr><td colspan="7">No M-PESA messages received yet. Make a small test payment to the configured line.</td></tr>
+        {% endfor %}
+        </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="gateway-note">
+      <strong>How matching works</strong>
+      <span>Online Till payments match by the M-PESA transaction reference. POS gateway payments can match by mart, amount, payer phone and a recent pending sale; ambiguous messages remain UNMATCHED instead of being assigned to the wrong sale.</span>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const money = v => 'KES ' + Number(v || 0).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const esc = s => String(s ?? '').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const fmtTime = iso => { if(!iso) return '—'; const d=new Date(iso); return d.toLocaleTimeString('en-KE',{hour12:false}); };
+
+  window.copyGatewayUrl = async function(){
+    const input=document.getElementById('gatewayUrl');
+    try { await navigator.clipboard.writeText(input.value); } catch(e) { input.select(); document.execCommand('copy'); }
+    const b=document.querySelector('.gateway-url-row button');
+    const old=b.textContent; b.textContent='Copied ✓'; setTimeout(()=>b.textContent=old,1200);
+  };
+
+  async function refreshGateway(){
+    try{
+      const r=await fetch('/control/api/payment-gateway/monitor',{credentials:'same-origin',cache:'no-store'});
+      if(!r.ok) throw new Error();
+      const d=await r.json();
+      document.getElementById('receivedTotal').textContent=money(d.received_total);
+      document.getElementById('matchedTotal').textContent=money(d.matched_total);
+      document.getElementById('unmatchedTotal').textContent=money(d.unmatched_total);
+      document.getElementById('receivedCount').textContent=d.received_count+' messages';
+      document.getElementById('matchedCount').textContent=d.matched_count+' payments';
+      document.getElementById('unmatchedCount').textContent=d.unmatched_count+' need attention';
+      document.getElementById('gatewayLast').textContent=d.last_received ? 'Last message '+fmtTime(d.last_received) : 'Waiting for the first message';
+      document.getElementById('gatewayPulse').classList.toggle('gateway-dot-active',!!d.last_received);
+
+      document.getElementById('storeTotals').innerHTML=(d.stores||[]).map(s=>`<div class="gateway-store"><small>${esc(s.name)}</small><strong>${money(s.total)}</strong><span>${s.count} messages today</span></div>`).join('');
+
+      const rows=(d.events||[]).map(e=>`<tr><td>${esc(fmtTime(e.time))}</td><td>SIM ${esc(e.sim)}</td><td>${esc(e.store)}</td><td>${esc(e.customer)}</td><td><code>${esc(e.transaction)}</code></td><td><strong>${money(e.amount)}</strong></td><td><span class="admin-badge ${e.status==='MATCHED'?'gateway-ok':'gateway-warn'}">${esc(e.status)}</span></td></tr>`).join('');
+      document.getElementById('gatewayFeed').innerHTML=rows||'<tr><td colspan="7">No M-PESA messages received yet.</td></tr>';
+    }catch(e){
+      document.getElementById('gatewayLast').textContent='Monitor temporarily unavailable';
+      document.getElementById('gatewayPulse').classList.remove('gateway-dot-active');
+    }
+  }
+  refreshGateway();
+  setInterval(refreshGateway,2500);
+})();
+</script>
+{% endblock %}

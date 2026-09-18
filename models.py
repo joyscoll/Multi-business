@@ -500,3 +500,58 @@ class Expense(db.Model):
     incurred_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False, index=True)
     created_by = db.Column(db.String(36), db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
+
+class PaymentGatewayEvent(db.Model):
+    __tablename__ = "payment_gateway_events"
+    id = db.Column(db.String(36), primary_key=True, default=uid)
+    business_id = db.Column(db.String(36), db.ForeignKey("businesses.id"), nullable=False, index=True)
+    store_id = db.Column(db.String(36), db.ForeignKey("stores.id"), index=True)
+    gateway_device_id = db.Column(db.String(120), nullable=False, index=True)
+    sim_slot = db.Column(db.Integer, nullable=False, default=0, index=True)
+    subscription_id = db.Column(db.BigInteger)
+    source = db.Column(db.String(40), default="android_sms", nullable=False)
+    sender = db.Column(db.String(120))
+    message = db.Column(db.Text, nullable=False)
+    received_at = db.Column(db.DateTime(timezone=True), nullable=False, default=now, index=True)
+    transaction_id = db.Column(db.String(160), index=True)
+    amount = db.Column(db.Numeric(14, 2), default=0)
+    customer = db.Column(db.String(240))
+    customer_phone = db.Column(db.String(40))
+    status = db.Column(db.String(30), default="UNMATCHED", nullable=False, index=True)
+    matched_payment_id = db.Column(db.String(36), db.ForeignKey("payments.id"))
+    raw_payload = db.Column(db.JSON)
+    created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False, index=True)
+    store = db.relationship("Store")
+    matched_payment = db.relationship("Payment")
+    __table_args__ = (
+        db.UniqueConstraint("business_id", "gateway_device_id", "transaction_id", name="uq_gateway_business_device_tx"),
+    )
+
+
+class LoyaltyAccount(db.Model):
+    __tablename__ = "loyalty_accounts"
+    id = db.Column(db.String(36), primary_key=True, default=uid)
+    business_id = db.Column(db.String(36), db.ForeignKey("businesses.id"), nullable=False, index=True)
+    customer_id = db.Column(db.String(36), db.ForeignKey("customers.id"), nullable=False, index=True)
+    points_balance = db.Column(db.Integer, default=0, nullable=False)
+    lifetime_points = db.Column(db.Integer, default=0, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=now, onupdate=now, nullable=False)
+    __table_args__ = (db.UniqueConstraint("business_id", "customer_id", name="uq_loyalty_business_customer"),)
+
+
+class LoyaltyTransaction(db.Model):
+    __tablename__ = "loyalty_transactions"
+    id = db.Column(db.String(36), primary_key=True, default=uid)
+    business_id = db.Column(db.String(36), db.ForeignKey("businesses.id"), nullable=False, index=True)
+    customer_id = db.Column(db.String(36), db.ForeignKey("customers.id"), nullable=False, index=True)
+    points = db.Column(db.Integer, nullable=False)
+    transaction_type = db.Column(db.String(40), nullable=False, default="EARN")
+    reference_type = db.Column(db.String(60))
+    reference_id = db.Column(db.String(36))
+    note = db.Column(db.String(240))
+    created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False, index=True)
+    __table_args__ = (
+        db.UniqueConstraint("reference_type", "reference_id", "transaction_type", name="uq_loyalty_reference"),
+    )
+

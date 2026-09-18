@@ -1,4 +1,6 @@
 from decimal import Decimal, InvalidOperation
+from datetime import timedelta
+import secrets
 import json
 import base64
 import csv
@@ -7,12 +9,13 @@ from io import BytesIO
 from PIL import Image, ImageOps
 from pathlib import Path
 from functools import wraps
-from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session
+from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session, send_file
 from flask_login import current_user, login_required
 from extensions import db
 from models import (Product, StoreProduct, PricingRule, PriceHistory, InventoryTransaction, User,
                     AuditLog, Sale, SaleItem, Order, Store, Business, Category, SystemError,
-                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, Customer, ProductAlias, ProductImage, now)
+                    Payment, Expense, Role, PaymentIntegration, SystemSetting, Permission, Customer, ProductAlias, ProductImage,
+                     PaymentGatewayEvent, LoyaltyAccount, LoyaltyTransaction, Shift, CashDrawerTransaction, now)
 from services.audit import audit
 from services.crypto import encrypt, decrypt
 from services.backup_restore import export_database_json, create_sqlite_snapshot, restore_database_json, restore_sqlite_snapshot
@@ -79,33 +82,193 @@ def _set_product_image(product, data_url, source_type="ADMIN_UPLOAD"):
 
 
 def _dashboard():
-    sales_total = db.session.query(db.func.coalesce(db.func.sum(Sale.total), 0)).filter_by(business_id=current_user.business_id, payment_status="PAID").scalar() or 0
-    today_sales = db.session.query(db.func.coalesce(db.func.sum(Sale.total), 0)).filter(
-        Sale.business_id == current_user.business_id, Sale.payment_status == "PAID",
-        db.func.date(Sale.created_at) == db.func.current_date()
+    business_id = current_user.business_id
+    today = db.func.date(Sale.created_at) == db.func.current_date()
+    today_order = db.func.date(Order.created_at) == db.func.current_date()
+    today_expense = db.func.date(Expense.incurred_at) == db.func.current_date()
+    today_inventory = db.func.date(InventoryTransaction.created_at) == db.func.current_date()
+
+    pos_sales_today = db.session.query(
+        db.func.coalesce(db.func.sum(Sale.total), 0)
+    ).filter(
+        Sale.business_id == business_id, Sale.payment_status == "PAID", today
     ).scalar() or 0
-    expenses_total = db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)).filter_by(business_id=current_user.business_id).scalar() or 0
-    cost_total = (db.session.query(db.func.coalesce(db.func.sum(SaleItem.line_total - (StoreProduct.cost_price * SaleItem.quantity)), 0))
-                  .join(Sale, Sale.id == SaleItem.sale_id)
-                  .join(StoreProduct, (StoreProduct.product_id == SaleItem.product_id) & (StoreProduct.store_id == Sale.store_id))
-                  .filter(Sale.business_id == current_user.business_id, Sale.payment_status == "PAID").scalar() or 0)
-    gross_profit = Decimal(str(sales_total)) - Decimal(str(cost_total))
+    online_sales_today = db.session.query(
+        db.func.coalesce(db.func.sum(Order.total), 0)
+    ).filter(
+        Order.business_id == business_id, Order.payment_status == "PAID", today_order
+    ).scalar() or 0
+    today_sales = Decimal(str(pos_sales_today)) + Decimal(str(online_sales_today))
+
+    sales_total = db.session.query(
+        db.func.coalesce(db.func.sum(Sale.total), 0)
+    ).filter_by(business_id=business_id, payment_status="PAID").scalar() or 0
+
+    expenses_total = db.session.query(
+        db.func.coalesce(db.func.sum(Expense.amount), 0)
+    ).filter_by(business_id=business_id).scalar() or 0
+    expenses_today = db.session.query(
+        db.func.coalesce(db.func.sum(Expense.amount), 0)
+    ).filter(Expense.business_id == business_id, today_expense).scalar() or 0
+
+    # Use the cost captured on the inventory movement itself. This keeps profit
+    # accurate after an admin changes a product's live cost price later.
+    cogs_today_raw = db.session.query(
+        db.func.coalesce(
+            db.func.sum((-InventoryTransaction.quantity) * InventoryTransaction.unit_cost), 0
+        )
+    ).join(Store, Store.id == InventoryTransaction.store_id).filter(
+        Store.business_id == business_id,
+        InventoryTransaction.transaction_type == "SALE",
+        InventoryTransaction.quantity < 0,
+        today_inventory,
+    ).scalar() or 0
+    cogs_today = Decimal(str(cogs_today_raw))
+    gross_profit_today = today_sales - cogs_today
+    net_result_today = gross_profit_today - Decimal(str(expenses_today))
+
+    cost_total_raw = db.session.query(
+        db.func.coalesce(
+            db.func.sum((-InventoryTransaction.quantity) * InventoryTransaction.unit_cost), 0
+        )
+    ).join(Store, Store.id == InventoryTransaction.store_id).filter(
+        Store.business_id == business_id,
+        InventoryTransaction.transaction_type == "SALE",
+        InventoryTransaction.quantity < 0,
+    ).scalar() or 0
+    cost_total = Decimal(str(cost_total_raw))
+    gross_profit = Decimal(str(sales_total)) - cost_total
     net_result = gross_profit - Decimal(str(expenses_total))
-    orders = Order.query.filter_by(business_id=current_user.business_id).count()
-    pending_orders = Order.query.filter_by(business_id=current_user.business_id, fulfillment_status="PENDING").count()
-    pending_payment_approvals = Order.query.filter_by(business_id=current_user.business_id, payment_status="PENDING_APPROVAL").count()
+
+    pos_items_today = db.session.query(
+        db.func.coalesce(db.func.sum(SaleItem.quantity), 0)
+    ).join(Sale, Sale.id == SaleItem.sale_id).filter(
+        Sale.business_id == business_id, Sale.payment_status == "PAID", today
+    ).scalar() or 0
+    online_items_today = db.session.query(
+        db.func.coalesce(db.func.sum(OrderItem.quantity), 0)
+    ).join(Order, Order.id == OrderItem.order_id).filter(
+        Order.business_id == business_id, Order.payment_status == "PAID", today_order
+    ).scalar() or 0
+    items_today = Decimal(str(pos_items_today)) + Decimal(str(online_items_today))
+
+    cash_today = db.session.query(
+        db.func.coalesce(db.func.sum(CashDrawerTransaction.amount), 0)
+    ).join(Shift, Shift.id == CashDrawerTransaction.shift_id).filter(
+        Shift.store_id.in_(db.session.query(Store.id).filter(Store.business_id == business_id)),
+        CashDrawerTransaction.transaction_type == "SALE_CASH",
+        db.func.date(CashDrawerTransaction.created_at) == db.func.current_date(),
+    ).scalar() or 0
+    card_today = db.session.query(
+        db.func.coalesce(db.func.sum(Payment.amount), 0)
+    ).filter(
+        Payment.business_id == business_id, Payment.status == "PAID",
+        Payment.method == "CARD", db.func.date(Payment.created_at) == db.func.current_date()
+    ).scalar() or 0
+    mpesa_today = db.session.query(
+        db.func.coalesce(db.func.sum(Payment.amount), 0)
+    ).filter(
+        Payment.business_id == business_id, Payment.status == "PAID",
+        Payment.method.in_(["MPESA", "MPESA_TILL", "MPESA_GATEWAY", "MPESA_SMS"]),
+        db.func.date(Payment.created_at) == db.func.current_date()
+    ).scalar() or 0
+
+    orders = Order.query.filter_by(business_id=business_id).count()
+    pending_orders = Order.query.filter_by(
+        business_id=business_id, fulfillment_status="PENDING"
+    ).count()
+    pending_payment_approvals = Order.query.filter_by(
+        business_id=business_id, payment_status="PENDING_APPROVAL"
+    ).count()
     low_stock = (StoreProduct.query.filter(StoreProduct.stock_quantity <= StoreProduct.reorder_level)
-                 .join(Product).join(Store).filter(Store.business_id == current_user.business_id).count())
+                 .join(Product).join(Store).filter(Store.business_id == business_id).count())
     products_online = (StoreProduct.query.join(Store).filter(
-        Store.business_id == current_user.business_id, StoreProduct.is_available.is_(True), StoreProduct.available_online.is_(True)
+        Store.business_id == business_id,
+        StoreProduct.is_available.is_(True),
+        StoreProduct.available_online.is_(True)
     ).count())
-    stores = Store.query.filter_by(business_id=current_user.business_id).order_by(Store.name).all()
-    recent = Sale.query.filter_by(business_id=current_user.business_id).order_by(Sale.created_at.desc()).limit(10).all()
-    return render_template("admin/dashboard.html", sales_total=sales_total, today_sales=today_sales,
-                           expenses_total=expenses_total, cost_total=cost_total, gross_profit=gross_profit,
-                           net_result=net_result, orders=orders, pending_orders=pending_orders,
-                           pending_payment_approvals=pending_payment_approvals, low_stock=low_stock,
-                           products_online=products_online, stores=stores, recent=recent)
+
+    low_stock_items = (StoreProduct.query.join(Product).join(Store).filter(
+        Store.business_id == business_id,
+        StoreProduct.stock_quantity <= StoreProduct.reorder_level,
+        StoreProduct.is_available.is_(True),
+    ).order_by(
+        (StoreProduct.stock_quantity - StoreProduct.reorder_level).asc(),
+        Product.name.asc()
+    ).limit(12).all())
+
+    image_missing = Product.query.filter(
+        (Product.image_url.is_(None)) | (Product.image_url == "")
+    ).count()
+
+    cashier_rows = db.session.query(
+        User.name,
+        Store.name,
+        db.func.count(Sale.id),
+        db.func.coalesce(db.func.sum(Sale.total), 0),
+    ).join(Sale, Sale.cashier_id == User.id).join(Store, Store.id == Sale.store_id).filter(
+        User.business_id == business_id,
+        Sale.business_id == business_id,
+        Sale.payment_status == "PAID",
+        today,
+    ).group_by(User.id, User.name, Store.name).order_by(
+        db.func.sum(Sale.total).desc()
+    ).limit(12).all()
+    cashier_stats = [
+        {"name": name, "store": store_name, "transactions": int(count), "sales": Decimal(str(total))}
+        for name, store_name, count, total in cashier_rows
+    ]
+
+    stores = Store.query.filter_by(business_id=business_id).order_by(Store.name).all()
+    recent = Sale.query.filter_by(business_id=business_id).order_by(Sale.created_at.desc()).limit(10).all()
+
+    gateway_q = PaymentGatewayEvent.query.filter_by(business_id=business_id)
+    gateway_today = db.func.date(PaymentGatewayEvent.received_at) == db.func.current_date()
+    gateway_received_count = gateway_q.filter(
+        PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"]), gateway_today
+    ).count()
+    gateway_received_total = gateway_q.with_entities(
+        db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)
+    ).filter(PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"]), gateway_today).scalar() or 0
+    gateway_matched_count = gateway_q.filter(
+        PaymentGatewayEvent.status == "MATCHED", gateway_today
+    ).count()
+    gateway_matched_total = gateway_q.with_entities(
+        db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)
+    ).filter(PaymentGatewayEvent.status == "MATCHED", gateway_today).scalar() or 0
+    gateway_unmatched_count = gateway_q.filter(
+        PaymentGatewayEvent.status == "UNMATCHED", gateway_today
+    ).count()
+    gateway_latest = gateway_q.order_by(PaymentGatewayEvent.received_at.desc()).first()
+
+    loyalty_members = LoyaltyAccount.query.filter_by(business_id=business_id).count()
+    loyalty_points = db.session.query(
+        db.func.coalesce(db.func.sum(LoyaltyAccount.points_balance), 0)
+    ).filter_by(business_id=business_id).scalar() or 0
+
+    return render_template(
+        "admin/dashboard.html",
+        sales_total=sales_total, today_sales=today_sales,
+        pos_sales_today=pos_sales_today, online_sales_today=online_sales_today,
+        expenses_total=expenses_total, expenses_today=expenses_today,
+        cost_total=cost_total, cogs_today=cogs_today,
+        gross_profit=gross_profit, gross_profit_today=gross_profit_today,
+        net_result=net_result, net_result_today=net_result_today,
+        today_items=items_today, cash_today=cash_today, card_today=card_today,
+        mpesa_today=mpesa_today, orders=orders, pending_orders=pending_orders,
+        pending_payment_approvals=pending_payment_approvals, low_stock=low_stock,
+        low_stock_items=low_stock_items, products_online=products_online,
+        image_missing=image_missing, cashier_stats=cashier_stats,
+        stores=stores, recent=recent,
+        gateway_received_count=gateway_received_count,
+        gateway_received_total=gateway_received_total,
+        gateway_matched_count=gateway_matched_count,
+        gateway_matched_total=gateway_matched_total,
+        gateway_unmatched_count=gateway_unmatched_count,
+        gateway_latest=gateway_latest,
+        loyalty_members=loyalty_members,
+        loyalty_points=loyalty_points,
+    )
 
 
 ORDER_FULFILLMENT_STATES = [
@@ -121,40 +284,217 @@ def _release_order_reservation(order):
 
 
 def _settle_order_payment(order, payment):
-    if payment.status == "PAID":
-        return True
-    for line in OrderItem.query.filter_by(order_id=order.id).all():
-        sp = StoreProduct.query.filter_by(store_id=order.store_id, product_id=line.product_id).first()
-        if not sp:
-            return False
-        available = Decimal(sp.stock_quantity or 0)
-        reserved = Decimal(sp.reserved_quantity or 0)
-        qty = Decimal(line.quantity)
-        if reserved < qty or available < qty:
-            return False
-    reference = (payment.external_reference or "").strip().upper()
-    if payment.provider_transaction_id:
-        reference = payment.provider_transaction_id
-    if not reference:
-        return False
-    duplicate = Payment.query.filter(Payment.provider_transaction_id == reference, Payment.id != payment.id).first()
-    if duplicate:
-        return False
-    payment.status = "PAID"
-    payment.provider_transaction_id = reference
-    payment.completed_at = now()
-    order.payment_status = "PAID"
-    order.status = "CONFIRMED"
-    for line in OrderItem.query.filter_by(order_id=order.id).all():
-        sp = StoreProduct.query.filter_by(store_id=order.store_id, product_id=line.product_id).first()
-        sp.reserved_quantity = max(Decimal("0"), Decimal(sp.reserved_quantity or 0) - Decimal(line.quantity))
-        sp.stock_quantity = Decimal(sp.stock_quantity or 0) - Decimal(line.quantity)
-        db.session.add(InventoryTransaction(
-            store_id=order.store_id, product_id=line.product_id, transaction_type="SALE",
-            quantity=-Decimal(line.quantity), unit_cost=sp.cost_price,
-            reference_type="ORDER", reference_id=order.id, created_by=current_user.id,
-        ))
-    return True
+    from services.payments.settlement import settle_order_payment
+    return settle_order_payment(order, payment, actor_id=current_user.id if current_user.is_authenticated else None)
+
+
+
+def _gateway_setting(business_id, key):
+    return SystemSetting.query.filter_by(business_id=business_id, key=key).first()
+
+
+def _gateway_secret_for(business_id):
+    setting = _gateway_setting(business_id, "payment_gateway_secret")
+    if not setting or not setting.value:
+        setting = setting or SystemSetting(business_id=business_id, key="payment_gateway_secret")
+        if not setting.value:
+            setting.value = secrets.token_urlsafe(32)
+        db.session.add(setting)
+        db.session.commit()
+    return setting.value
+
+
+def _gateway_url_for(business_id):
+    return url_for("api.payment_gateway_sms", _external=True) + "?key=" + _gateway_secret_for(business_id)
+
+
+@bp.get(f"{ADMIN_BASE}/payment-gateway")
+@admin_required("payments.view")
+def payment_gateway():
+    business_id = current_user.business_id
+    stores = Store.query.filter_by(business_id=business_id).order_by(Store.name).all()
+    secret = _gateway_secret_for(business_id)
+    url = url_for("api.payment_gateway_sms", _external=True) + "?key=" + secret
+
+    sim1 = _gateway_setting(business_id, "payment_gateway_sim_0_store_id")
+    sim2 = _gateway_setting(business_id, "payment_gateway_sim_1_store_id")
+    routes = {
+        0: sim1.value if sim1 else "",
+        1: sim2.value if sim2 else "",
+    }
+    today = db.func.date(PaymentGatewayEvent.received_at) == db.func.current_date()
+    events = (PaymentGatewayEvent.query.filter_by(business_id=business_id)
+              .order_by(PaymentGatewayEvent.received_at.desc()).limit(40).all())
+    received_total = db.session.query(db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)).filter(
+        PaymentGatewayEvent.business_id == business_id, PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"]), today
+    ).scalar() or 0
+    received_count = PaymentGatewayEvent.query.filter(
+        PaymentGatewayEvent.business_id == business_id, PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"]), today
+    ).count()
+    matched_total = db.session.query(db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)).filter(
+        PaymentGatewayEvent.business_id == business_id, PaymentGatewayEvent.status == "MATCHED", today
+    ).scalar() or 0
+    matched_count = PaymentGatewayEvent.query.filter(
+        PaymentGatewayEvent.business_id == business_id, PaymentGatewayEvent.status == "MATCHED", today
+    ).count()
+    unmatched_total = db.session.query(db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)).filter(
+        PaymentGatewayEvent.business_id == business_id, PaymentGatewayEvent.status == "UNMATCHED", today
+    ).scalar() or 0
+    unmatched_count = PaymentGatewayEvent.query.filter(
+        PaymentGatewayEvent.business_id == business_id, PaymentGatewayEvent.status == "UNMATCHED", today
+    ).count()
+    return render_template(
+        "admin/payment_gateway.html",
+        stores=stores, routes=routes, gateway_url=url,
+        events=events, received_total=received_total, received_count=received_count,
+        matched_total=matched_total, matched_count=matched_count,
+        unmatched_total=unmatched_total, unmatched_count=unmatched_count,
+    )
+
+
+@bp.post(f"{ADMIN_BASE}/payment-gateway/routing")
+@admin_required("payments.view")
+def save_gateway_routing():
+    business_id = current_user.business_id
+    stores = {s.id: s for s in Store.query.filter_by(business_id=business_id).all()}
+    for slot in (0, 1):
+        raw = (request.form.get(f"sim_{slot}_store_id") or "").strip()
+        setting = _gateway_setting(business_id, f"payment_gateway_sim_{slot}_store_id")
+        if raw and raw not in stores:
+            flash(f"SIM {slot + 1} mart selection is invalid.", "error")
+            return redirect(url_for("admin.payment_gateway"))
+        if raw:
+            if not setting:
+                setting = SystemSetting(business_id=business_id, key=f"payment_gateway_sim_{slot}_store_id")
+                db.session.add(setting)
+            setting.value = raw
+        elif setting:
+            db.session.delete(setting)
+    db.session.commit()
+    flash("Payment gateway SIM routing saved.", "success")
+    return redirect(url_for("admin.payment_gateway"))
+
+
+@bp.post(f"{ADMIN_BASE}/payment-gateway/rotate")
+@admin_required("payments.view")
+def rotate_gateway_key():
+    business_id = current_user.business_id
+    setting = _gateway_setting(business_id, "payment_gateway_secret")
+    if not setting:
+        setting = SystemSetting(business_id=business_id, key="payment_gateway_secret")
+        db.session.add(setting)
+    setting.value = secrets.token_urlsafe(32)
+    db.session.commit()
+    audit("PAYMENT_GATEWAY_KEY_ROTATED", "Business", business_id)
+    flash("Gateway link rotated. Update the Android gateway with the new link.", "success")
+    return redirect(url_for("admin.payment_gateway"))
+
+
+@bp.get(f"{ADMIN_BASE}/api/payment-gateway/monitor")
+@admin_required("payments.view")
+def payment_gateway_monitor():
+    business_id = current_user.business_id
+    today = db.func.date(PaymentGatewayEvent.received_at) == db.func.current_date()
+    q = PaymentGatewayEvent.query.filter_by(business_id=business_id)
+    events = q.order_by(PaymentGatewayEvent.received_at.desc()).limit(30).all()
+    received_q = q.filter(PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"]), today)
+    matched_q = q.filter(PaymentGatewayEvent.status == "MATCHED", today)
+    unmatched_q = q.filter(PaymentGatewayEvent.status == "UNMATCHED", today)
+    stores = Store.query.filter_by(business_id=business_id).order_by(Store.name).all()
+
+    store_totals = []
+    for store in stores:
+        total = q.filter(
+            PaymentGatewayEvent.store_id == store.id,
+            PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"]),
+            today,
+        ).with_entities(db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)).scalar() or 0
+        count = q.filter(
+            PaymentGatewayEvent.store_id == store.id,
+            PaymentGatewayEvent.status.in_(["MATCHED", "UNMATCHED"]),
+            today,
+        ).count()
+        store_totals.append({"id": store.id, "name": store.name, "total": str(total), "count": count})
+
+    def money(v):
+        return str(v or 0)
+
+    return jsonify(
+        ok=True,
+        received_total=money(received_q.with_entities(db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)).scalar()),
+        received_count=received_q.count(),
+        matched_total=money(matched_q.with_entities(db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)).scalar()),
+        matched_count=matched_q.count(),
+        unmatched_total=money(unmatched_q.with_entities(db.func.coalesce(db.func.sum(PaymentGatewayEvent.amount), 0)).scalar()),
+        unmatched_count=unmatched_q.count(),
+        last_received=(events[0].received_at.isoformat() if events else None),
+        stores=store_totals,
+        events=[
+            {
+                "id": e.id, "time": e.received_at.isoformat() if e.received_at else None,
+                "sim": e.sim_slot + 1, "store": e.store.name if getattr(e, "store", None) else "Unassigned",
+                "amount": money(e.amount), "customer": e.customer or "M-PESA customer",
+                "transaction": e.transaction_id or "—", "status": e.status,
+            } for e in events
+        ],
+    )
+
+
+@bp.get(f"{ADMIN_BASE}/daily-report")
+@admin_required("reports.view")
+def daily_report():
+    business_id = current_user.business_id
+    today_sale = db.func.date(Sale.created_at) == db.func.current_date()
+    today_order = db.func.date(Order.created_at) == db.func.current_date()
+    today_expense = db.func.date(Expense.incurred_at) == db.func.current_date()
+    today_inventory = db.func.date(InventoryTransaction.created_at) == db.func.current_date()
+
+    pos_sales = db.session.query(db.func.coalesce(db.func.sum(Sale.total), 0)).filter(
+        Sale.business_id == business_id, Sale.payment_status == "PAID", today_sale
+    ).scalar() or 0
+    online_sales = db.session.query(db.func.coalesce(db.func.sum(Order.total), 0)).filter(
+        Order.business_id == business_id, Order.payment_status == "PAID", today_order
+    ).scalar() or 0
+    cash = db.session.query(db.func.coalesce(db.func.sum(CashDrawerTransaction.amount), 0)).join(
+        Shift, Shift.id == CashDrawerTransaction.shift_id
+    ).join(Store, Store.id == Shift.store_id).filter(
+        Store.business_id == business_id,
+        CashDrawerTransaction.transaction_type == "SALE_CASH",
+        db.func.date(CashDrawerTransaction.created_at) == db.func.current_date(),
+    ).scalar() or 0
+    mpesa = db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(
+        Payment.business_id == business_id, Payment.status == "PAID",
+        Payment.method.in_(["MPESA", "MPESA_TILL", "MPESA_GATEWAY", "MPESA_SMS"]),
+        db.func.date(Payment.created_at) == db.func.current_date(),
+    ).scalar() or 0
+    card = db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(
+        Payment.business_id == business_id, Payment.status == "PAID", Payment.method == "CARD",
+        db.func.date(Payment.created_at) == db.func.current_date(),
+    ).scalar() or 0
+    expenses = db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)).filter(
+        Expense.business_id == business_id, today_expense
+    ).scalar() or 0
+    cogs = db.session.query(db.func.coalesce(
+        db.func.sum((-InventoryTransaction.quantity) * InventoryTransaction.unit_cost), 0
+    )).join(Store, Store.id == InventoryTransaction.store_id).filter(
+        Store.business_id == business_id, InventoryTransaction.transaction_type == "SALE",
+        InventoryTransaction.quantity < 0, today_inventory
+    ).scalar() or 0
+    items = db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity), 0)).join(Sale, Sale.id == SaleItem.sale_id).filter(
+        Sale.business_id == business_id, Sale.payment_status == "PAID", today_sale
+    ).scalar() or 0
+    online_items = db.session.query(db.func.coalesce(db.func.sum(OrderItem.quantity), 0)).join(Order, Order.id == OrderItem.order_id).filter(
+        Order.business_id == business_id, Order.payment_status == "PAID", today_order
+    ).scalar() or 0
+    total_sales = Decimal(str(pos_sales)) + Decimal(str(online_sales))
+    gross_profit = total_sales - Decimal(str(cogs))
+    net = gross_profit - Decimal(str(expenses))
+    return render_template("admin/daily_report.html",
+                           business_name=current_user.business.name if current_user.business else "Denmart",
+                           pos_sales=pos_sales, online_sales=online_sales, total_sales=total_sales,
+                           cash=cash, mpesa=mpesa, card=card, expenses=expenses, cogs=cogs,
+                           gross_profit=gross_profit, net_result=net,
+                           items=Decimal(str(items)) + Decimal(str(online_items)), report_date=now())
 
 
 @bp.get(f"{ADMIN_BASE}/orders")
@@ -773,15 +1113,19 @@ def export_sqlite():
     from tempfile import NamedTemporaryFile
     with NamedTemporaryFile(suffix=".sqlite", delete=False) as fh:
         path = fh.name
-    create_sqlite_snapshot(path)
-    data = Path(path).read_bytes()
     try:
+        create_sqlite_snapshot(path)
+        data = Path(path).read_bytes()
+    finally:
         Path(path).unlink(missing_ok=True)
-    except Exception:
-        pass
     audit("DATABASE_BACKUP_CREATED", "Business", current_user.business_id, new_values={"format": "sqlite"})
-    return Response(data, mimetype="application/vnd.sqlite3",
-                    headers={"Content-Disposition": "attachment; filename=denmart-backup.sqlite"})
+    return send_file(
+        BytesIO(data),
+        mimetype="application/x-sqlite3",
+        as_attachment=True,
+        download_name="denmart-backup.sqlite",
+        max_age=0,
+    )
 
 
 @bp.post(f"{ADMIN_BASE}/restore/json")
@@ -936,6 +1280,12 @@ def settings():
                 save_setting("delivery_enabled", "1" if request.form.get("delivery_enabled") == "1" else "0")
             except InvalidOperation:
                 flash("Delivery fees must be valid non-negative amounts.", "error")
+        if "loyalty_points_per_100" in request.form:
+            try:
+                points_rate = max(0, int(request.form.get("loyalty_points_per_100", "1")))
+                save_setting("loyalty_points_per_100", points_rate)
+            except (TypeError, ValueError):
+                flash("Loyalty points rate must be a whole number.", "error")
         if request.form.get("save_mpesa"):
             if not integration:
                 integration = PaymentIntegration(business_id=business.id, provider="SAFARICOM")
@@ -974,9 +1324,11 @@ def settings():
     bike_base_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_bike_base_fee").first()
     bike_km_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_bike_per_km").first()
     delivery_setting = SystemSetting.query.filter_by(business_id=business.id, key="delivery_enabled").first()
+    loyalty_setting = SystemSetting.query.filter_by(business_id=business.id, key="loyalty_points_per_100").first()
     return render_template("admin/settings.html", business=business, integration=integration,
                            footer_text=setting.value if setting else "All rights reserved · Denmart Merchants",
                            callback_url=callback, transaction_type=transaction_type, till_number=till_number,
                            bike_base_fee=bike_base_setting.value if bike_base_setting else "100",
                            bike_per_km=bike_km_setting.value if bike_km_setting else "20",
-                           delivery_enabled=(delivery_setting.value if delivery_setting else "1") == "1")
+                           delivery_enabled=(delivery_setting.value if delivery_setting else "1") == "1",
+                           loyalty_points_per_100=loyalty_setting.value if loyalty_setting else "1")

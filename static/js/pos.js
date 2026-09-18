@@ -80,9 +80,17 @@ async function makeSale(method){
   if(!r.ok)return toast(d.error||'Sale failed');
   if(method==='MPESA'){
     const p=await apiJSON('/api/payments/mpesa/initiate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sale_id:d.sale_id,amount:d.total,phone_number:phone})});
-    if(!p.r.ok)return toast(p.d.message||p.d.error||'M-PESA request failed');
-    toast('M-PESA prompt sent');
-    waitForPayment(p.d.payment_id,d.receipt_number);
+    if(p.r.ok){
+      toast('M-PESA prompt sent');
+      waitForPayment(p.d.payment_id,d.receipt_number);
+    }else if(p.r.status===503 && (p.d.error==='mpesa_not_configured'||p.d.error==='payment_provider_unavailable')){
+      const g=await apiJSON('/api/payments/gateway/await',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sale_id:d.sale_id,phone_number:phone})});
+      if(!g.r.ok)return toast(g.d.message||g.d.error||'M-PESA gateway could not start');
+      toast('Ask customer to pay to the M-PESA line · waiting for confirmation');
+      waitForPayment(g.d.payment_id,d.receipt_number);
+    }else{
+      return toast(p.d.message||p.d.error||'M-PESA request failed');
+    }
   }else{
     toast('Sale complete · '+d.receipt_number);window.open('/merchant/receipt/'+encodeURIComponent(d.receipt_number),'_blank','noopener');cart=[];renderCart();
   }

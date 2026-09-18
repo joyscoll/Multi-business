@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block body_class %}admin-page{% endblock %}
+{% block chrome %}{% endblock %}
+{% block content %}
+<div class="report-shell">
+  <div class="report-top">
+    <div><span class="eyebrow">REAL MART</span><h1>{{business_name}} · Daily Closing Report</h1><p>{{report_date.strftime('%d %B %Y')}}</p></div>
+    <div class="report-actions"><button class="admin-action" onclick="window.print()">Print / Save PDF</button><a class="admin-action" href="/control">Back to dashboard</a></div>
+  </div>
+  <section class="report-sheet">
+    <div class="report-kpis">
+      <div><small>Total sales</small><strong>KES {{'%.2f'|format(total_sales|float)}}</strong></div>
+      <div><small>Gross profit</small><strong>KES {{'%.2f'|format(gross_profit|float)}}</strong></div>
+      <div><small>After expenses</small><strong>KES {{'%.2f'|format(net_result|float)}}</strong></div>
+      <div><small>Items sold</small><strong>{{'%.0f'|format(items|float)}}</strong></div>
+    </div>
+    <div class="report-two-col">
+      <section><h2>Sales channels</h2><div class="report-line"><span>Physical POS</span><strong>KES {{'%.2f'|format(pos_sales|float)}}</strong></div><div class="report-line"><span>Online shop</span><strong>KES {{'%.2f'|format(online_sales|float)}}</strong></div><div class="report-line"><span>M-PESA</span><strong>KES {{'%.2f'|format(mpesa|float)}}</strong></div><div class="report-line"><span>Cash</span><strong>KES {{'%.2f'|format(cash|float)}}</strong></div><div class="report-line"><span>Card / other</span><strong>KES {{'%.2f'|format(card|float)}}</strong></div></section>
+      <section><h2>Profit & control</h2><div class="report-line"><span>Captured stock cost</span><strong>KES {{'%.2f'|format(cogs|float)}}</strong></div><div class="report-line"><span>Expenses</span><strong>KES {{'%.2f'|format(expenses|float)}}</strong></div><div class="report-line"><span>Estimated gross profit</span><strong>KES {{'%.2f'|format(gross_profit|float)}}</strong></div><div class="report-line total"><span>Estimated net result</span><strong>KES {{'%.2f'|format(net_result|float)}}</strong></div><div class="report-line"><span>Refunds recorded</span><strong>KES 0.00</strong></div><small class="report-note">This build does not yet have a refund ledger; the report therefore shows zero until refunds are implemented.</small></section>
+    </div>
+    <div class="report-footer"><span>Generated from live Real Mart records.</span><span>Keep this report with the day's closing paperwork.</span></div>
+  </section>
+</div>
+{% endblock %}

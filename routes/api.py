@@ -1,12 +1,17 @@
 from decimal import Decimal, InvalidOperation
+from datetime import datetime, timedelta, timezone
+import json
 import re
 from flask import Blueprint, current_app, jsonify, request, session
 from flask_login import current_user, login_required
 from extensions import csrf, db
-from models import Product, ProductAlias, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem, InventoryTransaction, now, Store, Customer, Business, PaymentIntegration, SystemSetting
+from models import (Product, ProductAlias, StoreProduct, Payment, Sale, SaleItem, Order, OrderItem,
+                    InventoryTransaction, now, Store, Customer, Business, PaymentIntegration,
+                    SystemSetting, PaymentGatewayEvent)
 from services.search import forgiving_rank
 from services.payments.daraja import DarajaProvider
 from services.crypto import decrypt
+from services.loyalty import award_purchase_points
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -182,6 +187,211 @@ def configured_daraja(business_id):
         return None
 
 
+def _gateway_secret():
+    setting = SystemSetting.query.filter_by(key="payment_gateway_secret").first()
+    return (setting.value or "").strip() if setting else ""
+
+
+def _gateway_parse_amount(message):
+    patterns = [
+        r"(?:KSH|KSHS|KES)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:KSH|KSHS|KES)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message or "", re.IGNORECASE)
+        if match:
+            try:
+                return Decimal(match.group(1).replace(",", ""))
+            except InvalidOperation:
+                return None
+    return None
+
+
+def _gateway_parse_transaction(message):
+    text = str(message or "").upper()
+    patterns = [
+        r"\b([A-Z0-9]{8,16})\s+CONFIRMED\b",
+        r"\bCONFIRMED[.\s]+([A-Z0-9]{8,16})\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _gateway_parse_customer(message):
+    match = re.search(
+        r"received\s+(?:from|by)\s+(.+?)(?=\s+(?:on behalf|for account|at\s+\d)|\s+\+?254\d{9}\b|\s+0[17]\d{8}\b|$)",
+        str(message or ""),
+        re.IGNORECASE,
+    )
+    return match.group(1).strip(" .,-")[:240] if match else ""
+
+
+def _gateway_parse_phone(message):
+    match = re.search(r"(?:\+?254|0)(?:7|1)\d{8}\b", str(message or ""))
+    return normalize_ke_phone(match.group(0)) if match else None
+
+
+def _gateway_store(business_id, sim_slot):
+    setting = SystemSetting.query.filter_by(
+        business_id=business_id, key=f"payment_gateway_sim_{sim_slot}_store_id"
+    ).first()
+    if not setting or not setting.value:
+        return None
+    store = db.session.get(Store, setting.value)
+    return store if store and store.business_id == business_id and store.is_active else None
+
+
+def _settle_gateway_match(event, payment):
+    from services.payments.settlement import settle_order_payment, settle_sale_payment
+
+    actor_id = None
+    if payment.order_id:
+        order = db.session.get(Order, payment.order_id)
+        if order and settle_order_payment(order, payment, actor_id=actor_id):
+            event.store_id = payment.store_id
+            event.status = "MATCHED"
+            event.matched_payment_id = payment.id
+            payment.raw_provider_reference = event.message
+            return True
+    elif payment.sale_id:
+        sale = db.session.get(Sale, payment.sale_id)
+        if sale and settle_sale_payment(sale, payment, actor_id=actor_id):
+            event.store_id = payment.store_id
+            event.status = "MATCHED"
+            event.matched_payment_id = payment.id
+            payment.raw_provider_reference = event.message
+            return True
+    return False
+
+
+@csrf.exempt
+@bp.post("/payment-gateway/sms")
+def payment_gateway_sms():
+    supplied_key = (request.args.get("key") or request.headers.get("X-RealMart-Gateway-Key") or "").strip()
+    secret = _gateway_secret()
+    if not secret or supplied_key != secret:
+        return jsonify(error="gateway_not_authorized"), 401
+
+    payload = request.get_json(silent=True) or {}
+    event_id = (request.headers.get("X-RealMart-Event-Id") or payload.get("event_id") or "").strip()
+    device_id = (request.headers.get("X-RealMart-Gateway-Id") or payload.get("gateway_device_id") or "").strip()[:120]
+    message = str(payload.get("message") or "").strip()
+    sender = str(payload.get("sender") or "").strip()[:120]
+    source = str(payload.get("source") or "android_sms").strip()[:40]
+    if not event_id or not device_id or not message:
+        return jsonify(error="event_id_device_id_message_required"), 400
+    if not re.search(r"mpesa|m-pesa|safaricom", f"{sender} {message}", re.IGNORECASE):
+        return jsonify(ok=True, ignored=True), 200
+
+    business_setting = SystemSetting.query.filter_by(
+        key="payment_gateway_secret", value=secret
+    ).first()
+    if not business_setting:
+        return jsonify(error="gateway_not_authorized"), 401
+    business_id = business_setting.business_id
+
+    try:
+        sim_slot = int(payload.get("sim_slot", 0))
+    except (TypeError, ValueError):
+        sim_slot = 0
+    sim_slot = 0 if sim_slot < 0 else min(sim_slot, 1)
+
+    amount = None
+    try:
+        raw_amount = payload.get("amount")
+        if raw_amount not in (None, ""):
+            amount = Decimal(str(raw_amount).replace(",", ""))
+    except InvalidOperation:
+        amount = None
+    if amount is None:
+        amount = _gateway_parse_amount(message)
+
+    transaction_id = str(payload.get("transaction_id") or "").strip().upper()[:160] or _gateway_parse_transaction(message)
+    if not transaction_id:
+        transaction_id = f"EVENT-{event_id}"[:160]
+    existing = PaymentGatewayEvent.query.filter_by(
+        business_id=business_id, gateway_device_id=device_id,
+        transaction_id=transaction_id
+    ).first()
+    if existing:
+        return jsonify(ok=True, duplicate=True, event_id=existing.id), 200
+
+    customer = str(payload.get("customer") or "").strip()[:240] or _gateway_parse_customer(message)
+    customer_phone = normalize_ke_phone(payload.get("customer_phone")) or _gateway_parse_phone(message)
+    try:
+        received_at = datetime.fromtimestamp(
+            int(payload.get("received_at")) / 1000, tz=timezone.utc
+        ) if payload.get("received_at") else now()
+    except Exception:
+        received_at = now()
+
+    store = _gateway_store(business_id, sim_slot)
+    event = PaymentGatewayEvent(
+        business_id=business_id,
+        store_id=store.id if store else None,
+        gateway_device_id=device_id,
+        sim_slot=sim_slot,
+        subscription_id=int(payload.get("subscription_id")) if str(payload.get("subscription_id") or "").isdigit() else None,
+        source=source or "android_sms",
+        sender=sender,
+        message=message,
+        received_at=received_at,
+        transaction_id=transaction_id,
+        amount=amount or Decimal("0"),
+        customer=customer,
+        customer_phone=customer_phone,
+        status="UNMATCHED",
+        raw_payload=payload,
+    )
+    db.session.add(event)
+    db.session.flush()
+
+    # 1) Exact reference matching handles online Till/Buy-Goods payments.
+    pending_ref = None
+    if transaction_id:
+        pending_ref = (Payment.query.filter_by(
+            business_id=business_id, method="MPESA_TILL", status="PENDING_APPROVAL",
+            external_reference=transaction_id
+        ).order_by(Payment.created_at.desc()).first())
+    matched = False
+    if pending_ref:
+        matched = _settle_gateway_match(event, pending_ref)
+
+    # 2) POS gateway payments can be matched by store + amount + phone, or,
+    #    when phone is absent, by a single recent pending amount.
+    if not matched and amount and store:
+        cutoff = now() - timedelta(minutes=10)
+        candidates = Payment.query.filter(
+            Payment.business_id == business_id,
+            Payment.store_id == store.id,
+            Payment.method == "MPESA_GATEWAY",
+            Payment.status == "PENDING",
+            Payment.amount == amount,
+            Payment.created_at >= cutoff,
+        ).order_by(Payment.created_at.desc()).all()
+        if customer_phone:
+            exact = [p for p in candidates if normalize_ke_phone(p.phone_number) == customer_phone]
+            if exact:
+                candidates = exact
+        if len(candidates) == 1:
+            matched = _settle_gateway_match(event, candidates[0])
+
+    event.status = "MATCHED" if matched else "UNMATCHED"
+    db.session.commit()
+    return jsonify(
+        ok=True,
+        event_id=event.id,
+        matched=matched,
+        transaction_id=transaction_id,
+        amount=str(amount) if amount is not None else "0",
+        store_id=event.store_id,
+        status=event.status,
+    ), 200
+
+
 @csrf.exempt
 @bp.post("/payments/mpesa/initiate")
 @bp.post("/payments/daraja/initiate")
@@ -295,6 +505,40 @@ def till_payment_submit():
                    message="Payment submitted and awaiting approval")
 
 
+@csrf.exempt
+@bp.post("/payments/gateway/await")
+@cashier_api
+def payment_gateway_await():
+    data = request.get_json(silent=True) or {}
+    sale_id = data.get("sale_id")
+    phone = normalize_ke_phone(data.get("phone_number"))
+    if not sale_id:
+        return jsonify(error="sale_required"), 400
+    sale = db.session.get(Sale, sale_id)
+    if not sale or sale.business_id != current_user.business_id or sale.store_id != current_user.store_id:
+        return jsonify(error="sale_not_found"), 404
+    if sale.payment_status == "PAID":
+        return jsonify(error="already_paid"), 409
+
+    existing = Payment.query.filter_by(
+        sale_id=sale.id, method="MPESA_GATEWAY", status="PENDING"
+    ).order_by(Payment.created_at.desc()).first()
+    if existing:
+        return jsonify(ok=True, payment_id=existing.id, status=existing.status,
+                       amount=str(existing.amount), message="Waiting for the M-PESA phone message")
+
+    payment = Payment(
+        business_id=sale.business_id, store_id=sale.store_id, sale_id=sale.id,
+        provider="SAFARICOM", method="MPESA_GATEWAY", amount=sale.total,
+        currency=current_app.config["CURRENCY"], status="PENDING", phone_number=phone,
+    )
+    db.session.add(payment)
+    db.session.commit()
+    return jsonify(ok=True, payment_id=payment.id, status=payment.status,
+                   amount=str(payment.amount), receipt=sale.receipt_number,
+                   message="Waiting for the M-PESA phone message")
+
+
 @bp.get("/payments/<payment_id>/status")
 def payment_status(payment_id):
     payment = db.session.get(Payment, payment_id)
@@ -381,6 +625,7 @@ def mpesa_callback():
                 order=db.session.get(Order,payment.order_id)
                 if order:
                     order.payment_status="PAID";order.status="CONFIRMED"
+                    award_purchase_points(order.business_id, order.customer_id, order.total, "ORDER", order.id)
                     for line in OrderItem.query.filter_by(order_id=order.id).all():
                         sp=StoreProduct.query.filter_by(store_id=order.store_id,product_id=line.product_id).first()
                         if sp: sp.reserved_quantity=max(Decimal("0"),Decimal(sp.reserved_quantity or 0)-Decimal(line.quantity));sp.stock_quantity=Decimal(sp.stock_quantity or 0)-Decimal(line.quantity);db.session.add(InventoryTransaction(store_id=order.store_id,product_id=line.product_id,transaction_type="SALE",quantity=-Decimal(line.quantity),unit_cost=sp.cost_price,reference_type="ORDER",reference_id=order.id))

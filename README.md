@@ -53,3 +53,22 @@ The clean starter catalogue now contains **1,300+ supermarket product identities
 Product photos now use a strict hierarchy: an administrator can upload an exact package/product photo (normalized to an 800×800 white square for consistent cards), an administrator can enter a verified image URL, and the storefront can attempt a high-confidence product-name/brand image lookup against Open Food Facts/Open Beauty Facts/Open Products Facts. It does not intentionally substitute unrelated stock photography for a missing SKU.
 
 The public shop exposes a compact QR code for the `/shop` URL with Save/Share controls. Database recovery includes complete JSON and portable SQLite snapshots; restore creates the current schema before replacing it, including on an empty fresh deployment.
+
+## Real Mart M-PESA phone gateway
+
+The web application now includes a protected live payment monitor at `/control/payment-gateway`.
+
+1. Open **Control → Payment monitor**.
+2. Copy the generated HTTPS gateway URL.
+3. Paste that single URL into the native Real Mart Android gateway app.
+4. Assign **SIM 1** and **SIM 2** to the correct mart/branch.
+5. Incoming M-PESA SMS messages are stored, displayed live, deduplicated, and can auto-match pending online Till payments and recent POS gateway payments.
+
+The receiving API is:
+
+`POST /api/payment-gateway/sms?key=<business-gateway-key>`
+
+The Android gateway supplies the SIM slot, device ID, transaction ID, amount, customer text, and raw message. Unambiguous payment matches are settled automatically; ambiguous messages stay `UNMATCHED`.
+
+SQLite backups use a real attachment response with `as_attachment=True` and are available from **Control → Backups**.
+

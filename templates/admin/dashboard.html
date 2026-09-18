@@ -1,2 +1,115 @@
-{% extends 'base.html' %}{% block body_class %}admin-page{% endblock %}{% block chrome %}{% endblock %}{% block content %}
-<div class="control-shell"><aside class="control-sidebar"><div class="control-brand"><span class="brand-mark">DM</span><div><strong>{{business_name}}</strong><small>Admin dashboard</small></div></div><nav><a class="active" href="/control">Overview</a><a href="/control/products">Products & visibility</a><a href="/control/stores">Marts</a><a href="/control/users">Staff & access</a><a href="/control/expenses">Expenses</a><a href="/control/pricing">Pricing</a><a href="/control/settings">M-PESA & settings</a><a href="/control/audit">Audit</a><a href="/control/system-errors">System errors</a><a href="/control/security">Security</a><a href="/control/backups">Backups</a></nav><div class="control-bottom"><span>MASTER ADMIN</span><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button>Sign out</button></form></div></aside><main class="control-main"><header class="control-header"><div><span class="eyebrow">DENMART ADMIN</span><h1>Dashboard</h1><p>Run the store from one place.</p></div><div class="control-user">{{current_user.username}}<small>Master administrator</small></div></header><div class="control-grid"><div class="control-card emphasis"><span>Today's paid sales</span><strong>KES {{'%.0f'|format(today_sales|float)}}</strong><small>Live business total</small></div><div class="control-card"><span>Online products</span><strong>{{products_online}}</strong><small>Visible and in stock</small></div><div class="control-card"><span>Low stock</span><strong>{{low_stock}}</strong><small>Needs attention</small></div><div class="control-card"><span>Orders</span><strong>{{orders}}</strong><small>{{pending_orders}} awaiting fulfilment</small></div></div><div class="admin-launch-row"><a class="admin-launch primary" href="/control/orders"><strong>Online orders</strong><span>{{pending_payment_approvals}} payments awaiting approval · {{pending_orders}} awaiting fulfilment</span></a><a class="admin-launch" href="/control/products"><strong>Catalogue</strong><span>Availability and pricing</span></a><a class="admin-launch" href="/control/settings"><strong>M-PESA</strong><span>Payment settings</span></a></div><div class="control-columns"><section class="control-panel"><div class="panel-title"><div><span class="eyebrow">BRANCHES</span><h2>Mart network</h2></div><a href="/control/stores">Manage</a></div>{% for s in stores %}<div class="control-row"><div><strong>{{s.name}}</strong><small>{{s.code}} · {{s.address or 'Address not set'}}</small></div><span class="status-pill">{{'ACTIVE' if s.is_active else 'OFFLINE'}}</span></div>{% else %}<div class="empty-state">No marts configured.</div>{% endfor %}</section><section class="control-panel"><div class="panel-title"><div><span class="eyebrow">RECENT SALES</span><h2>Latest activity</h2></div><a href="/control/audit">Audit</a></div>{% for sale in recent %}<div class="control-row"><div><strong>{{sale.receipt_number}}</strong><small>{{sale.created_at.strftime('%d %b %H:%M') if sale.created_at else ''}}</small></div><strong>KES {{'%.0f'|format(sale.total|float)}}</strong></div>{% else %}<div class="empty-state">No sales yet.</div>{% endfor %}</section></div></main></div>{% endblock %}
+{% extends 'base.html' %}
+{% block body_class %}admin-page{% endblock %}
+{% block chrome %}{% endblock %}
+{% block content %}
+<div class="control-shell">
+  <aside class="control-sidebar">
+    <div class="control-brand"><span class="brand-mark">DM</span><div><strong>{{business_name}}</strong><small>Admin dashboard</small></div></div>
+    <nav>
+      <a class="active" href="/control">Overview</a>
+      <a href="/control/payment-gateway">💳 Payment monitor</a>
+      <a href="/control/orders">Online orders</a>
+      <a href="/control/products">Products & visibility</a>
+      <a href="/control/stores">Marts</a>
+      <a href="/control/users">Staff & access</a>
+      <a href="/control/expenses">Expenses</a>
+      <a href="/control/pricing">Pricing</a>
+      <a href="/control/settings">M-PESA & settings</a>
+      <a href="/control/audit">Audit</a>
+      <a href="/control/system-errors">System errors</a>
+      <a href="/control/security">Security</a>
+      <a href="/control/backups">Backups</a>
+    </nav>
+    <div class="control-bottom"><span>MASTER ADMIN</span><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button>Sign out</button></form></div>
+  </aside>
+
+  <main class="control-main">
+    <header class="control-header">
+      <div><span class="eyebrow">DENMART ADMIN</span><h1>Dashboard</h1><p>Run the store from one place.</p></div>
+      <div class="control-user">{{current_user.username}}<small>Master administrator</small></div>
+    </header>
+
+    <div class="control-grid">
+      <div class="control-card emphasis"><span>Today's sales</span><strong>KES {{'%.2f'|format(today_sales|float)}}</strong><small>POS + paid online orders</small></div>
+      <div class="control-card"><span>Gross profit</span><strong>KES {{'%.2f'|format(gross_profit_today|float)}}</strong><small>Sales less captured stock cost</small></div>
+      <div class="control-card"><span>M-PESA received</span><strong>KES {{'%.2f'|format(mpesa_today|float)}}</strong><small>Confirmed payment records</small></div>
+      <div class="control-card"><span>Low stock</span><strong>{{low_stock}}</strong><small>Items at or below reorder level</small></div>
+    </div>
+
+    <div class="admin-launch-row">
+      <a class="admin-launch primary" href="/control/payment-gateway"><strong>💳 M-PESA payment monitor</strong><span>{{gateway_received_count}} today · KES {{'%.2f'|format(gateway_received_total|float)}} received · {{gateway_unmatched_count}} unmatched</span></a>
+      <a class="admin-launch" href="/control/daily-report"><strong>Daily closing report</strong><span>Cash, M-PESA, card, online, stock cost and profit</span></a>
+      <a class="admin-launch" href="/control/orders"><strong>Online orders</strong><span>{{pending_payment_approvals}} payments awaiting approval · {{pending_orders}} awaiting fulfilment</span></a>
+      <a class="admin-launch" href="/control/products"><strong>Catalogue</strong><span>1322 seeded identities · {{image_missing}} still need an exact product photo</span></a>
+      <a class="admin-launch" href="/control/settings"><strong>M-PESA & settings</strong><span>Daraja, Till, delivery, loyalty and business identity</span></a>
+    </div>
+
+    <section class="control-panel dashboard-day-panel">
+      <div class="panel-title"><div><span class="eyebrow">TODAY AT A GLANCE</span><h2>Automatic totals</h2></div><a href="/control/daily-report">Open full report →</a></div>
+      <div class="intel-stat-grid">
+        <div class="intel-stat"><small>POS sales</small><strong>KES {{'%.2f'|format(pos_sales_today|float)}}</strong></div>
+        <div class="intel-stat"><small>Online sales</small><strong>KES {{'%.2f'|format(online_sales_today|float)}}</strong></div>
+        <div class="intel-stat"><small>Items sold</small><strong>{{'%.0f'|format(today_items|float)}}</strong></div>
+        <div class="intel-stat"><small>Cash</small><strong>KES {{'%.2f'|format(cash_today|float)}}</strong></div>
+        <div class="intel-stat"><small>Card / other</small><strong>KES {{'%.2f'|format(card_today|float)}}</strong></div>
+        <div class="intel-stat"><small>Expenses today</small><strong>KES {{'%.2f'|format(expenses_today|float)}}</strong></div>
+        <div class="intel-stat"><small>Net after expenses</small><strong>KES {{'%.2f'|format(net_result_today|float)}}</strong></div>
+        <div class="intel-stat"><small>Loyalty points</small><strong>{{loyalty_points}}</strong></div>
+      </div>
+    </section>
+
+    <div class="control-columns">
+      <section class="control-panel">
+        <div class="panel-title"><div><span class="eyebrow">LOW STOCK INTELLIGENCE</span><h2>Needs attention</h2></div><a href="/control/products">Manage</a></div>
+        {% for item in low_stock_items %}
+        <div class="control-row">
+          <div><strong>{{item.product.name}}</strong><small>{{item.store.name}} · stock {{item.stock_quantity}} · reorder at {{item.reorder_level}}</small></div>
+          <span class="status-pill status-low">RESTOCK</span>
+        </div>
+        {% else %}
+        <div class="empty-state">No products are currently at or below their reorder level.</div>
+        {% endfor %}
+      </section>
+
+      <section class="control-panel">
+        <div class="panel-title"><div><span class="eyebrow">CASHIER ACCOUNTABILITY</span><h2>Today's paid sales</h2></div><a href="/control/audit">Audit</a></div>
+        {% for row in cashier_stats %}
+        <div class="control-row">
+          <div><strong>{{row.name}}</strong><small>{{row.store}} · {{row.transactions}} transactions</small></div>
+          <strong>KES {{'%.2f'|format(row.sales|float)}}</strong>
+        </div>
+        {% else %}
+        <div class="empty-state">No paid POS transactions today.</div>
+        {% endfor %}
+      </section>
+    </div>
+
+    <section class="control-panel">
+      <div class="panel-title"><div><span class="eyebrow">M-PESA GATEWAY</span><h2>Latest phone confirmations</h2></div><a href="/control/payment-gateway">Open monitor</a></div>
+      {% if gateway_latest %}
+      <div class="gateway-highlight">
+        <div><span class="gateway-dot"></span><div><strong>{{gateway_latest.customer or 'M-PESA customer'}}</strong><small>SIM {{gateway_latest.sim_slot + 1}} · {{gateway_latest.transaction_id}}</small></div></div>
+        <div><strong>KES {{'%.2f'|format(gateway_latest.amount|float)}}</strong><small>{{gateway_latest.status}}</small></div>
+      </div>
+      {% else %}
+      <div class="empty-state">No M-PESA phone messages have reached the gateway yet.</div>
+      {% endif %}
+    </section>
+
+    <div class="control-columns">
+      <section class="control-panel">
+        <div class="panel-title"><div><span class="eyebrow">BRANCHES</span><h2>Mart network</h2></div><a href="/control/stores">Manage</a></div>
+        {% for s in stores %}
+        <div class="control-row"><div><strong>{{s.name}}</strong><small>{{s.code}} · {{s.address or 'Address not set'}}</small></div><span class="status-pill">{{'ACTIVE' if s.is_active else 'OFFLINE'}}</span></div>
+        {% else %}<div class="empty-state">No marts configured.</div>{% endfor %}
+      </section>
+      <section class="control-panel">
+        <div class="panel-title"><div><span class="eyebrow">RECENT SALES</span><h2>Latest activity</h2></div><a href="/control/audit">Audit</a></div>
+        {% for sale in recent %}
+        <div class="control-row"><div><strong>{{sale.receipt_number}}</strong><small>{{sale.created_at.strftime('%d %b %H:%M') if sale.created_at else ''}}</small></div><strong>KES {{'%.2f'|format(sale.total|float)}}</strong></div>
+        {% else %}<div class="empty-state">No sales yet.</div>{% endfor %}
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}
