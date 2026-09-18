@@ -61,4 +61,10 @@ def hidden_admin_portal():
 @bp.post("/logout")
 @login_required
 def logout():
-    logout_user(); session.clear(); return redirect("/")
+    # Keep staff/admin users inside their own portal boundary after sign-out.
+    # The next visit therefore lands on the correct authentication screen
+    # instead of sending a merchant to the public storefront.
+    portal = session.get("portal")
+    logout_user()
+    session.clear()
+    return redirect("/control" if portal == "admin" else "/merchant" if portal == "pos" else "/")
