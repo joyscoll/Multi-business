@@ -7,10 +7,10 @@
 <main class="admin-main">
   <div class="eyebrow">ACCESS MANAGEMENT</div>
   <h1>Staff & access</h1>
-  <p class="muted">Create the people who run each mart. Each person gets their own sign-in, role and optional mart assignment.</p>
+  <p class="muted">Create the people who run each mart. Every staff account can sign in to the merchant/POS portal; the selected role controls what they can do elsewhere in the system.</p>
 
   <section class="admin-panel">
-    <div class="toolbar"><div><h2>Add staff member</h2><div class="muted">Manager and cashier accounts work at the merchant/POS portal. Stock Controller and Accountant accounts are limited by role.</div></div></div>
+    <div class="toolbar"><div><h2>Add staff member</h2><div class="muted">Every account created here can sign in at the merchant/POS portal. Their role controls their administrative permissions.</div></div></div>
     <form method="post" class="admin-form-grid">
       <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
       <label>Name<input class="admin-input wide" name="name" required></label>

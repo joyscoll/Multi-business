@@ -15,7 +15,7 @@ def cashier_required(fn):
     @login_required
     def wrapped(*args, **kwargs):
         from flask import session
-        if session.get("portal") != "pos" or not current_user.has_permission("sales.create"):
+        if session.get("portal") != "pos" or not current_user.is_active or not current_user.business_id or not current_user.role:
             return jsonify(error="forbidden"), 403
         # A merchant account created by the admin may omit a mart assignment.
         # Use the first active mart automatically so a valid cashier can sign in

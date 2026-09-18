@@ -18,8 +18,8 @@ def _login(target):
         if user and user.is_active and user.check_password(password):
             if target == "admin" and not (user.role and user.role.name == "OWNER"):
                 flash("Control-centre access is reserved for the master administrator.", "error")
-            elif target == "pos" and not user.has_permission("sales.create"):
-                flash("This account is not enabled for merchant sales.", "error")
+            elif target == "pos" and not (user.is_active and user.business_id and user.role):
+                flash("This account is not enabled for merchant access.", "error")
             else:
                 if target == "pos" and not user.store_id:
                     from models import Store
@@ -45,7 +45,7 @@ def _login(target):
 
 @bp.route("/merchant", methods=["GET", "POST"])
 def pos_login():
-    if current_user.is_authenticated and session.get("portal") == "pos" and current_user.has_permission("sales.create"):
+    if current_user.is_authenticated and session.get("portal") == "pos" and current_user.is_active and current_user.business_id:
         return redirect("/merchant/on")
     return _login("pos")
 
