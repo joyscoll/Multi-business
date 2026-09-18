@@ -4,7 +4,7 @@ import base64
 import csv
 import io
 from io import BytesIO
-from PIL import Image
+from PIL import Image, ImageOps
 from pathlib import Path
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, url_for, Response, current_app, session
@@ -33,6 +33,49 @@ def admin_required(permission=None):
             return fn(*args, **kwargs)
         return wrapped
     return decorator
+
+
+
+def _uploaded_product_image(file_storage, product_name="Product"):
+    """Return a compact square WebP data URL so uploaded photos travel with backups."""
+    if not file_storage or not getattr(file_storage, "filename", ""):
+        return None
+    if not (getattr(file_storage, "mimetype", "") or "").lower().startswith("image/"):
+        raise ValueError("Choose a valid image file.")
+    raw = file_storage.read()
+    if not raw:
+        raise ValueError("The image file is empty.")
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError("Product images must be 8 MB or smaller.")
+    try:
+        source = Image.open(BytesIO(raw))
+        source = ImageOps.exif_transpose(source).convert("RGBA")
+        source.thumbnail((760, 760), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (800, 800), "white")
+        x = (800 - source.width) // 2
+        y = (800 - source.height) // 2
+        canvas.paste(source, (x, y), source)
+        out = BytesIO()
+        canvas.save(out, format="WEBP", quality=82, method=6, optimize=True)
+        encoded = base64.b64encode(out.getvalue()).decode("ascii")
+        return f"data:image/webp;base64,{encoded}"
+    except Exception as exc:
+        raise ValueError("The uploaded file is not a readable image.") from exc
+
+
+def _set_product_image(product, data_url, source_type="ADMIN_UPLOAD"):
+    if not data_url:
+        return
+    product.image_url = data_url
+    # Keep uploaded data URLs only on Product so portable backups do not store
+    # the same image twice. Remote image URLs may still be recorded as metadata.
+    if not str(data_url).startswith("data:image/"):
+        ProductImage.query.filter_by(product_id=product.id, is_primary=True).update({"is_primary": False})
+        db.session.add(ProductImage(
+            product_id=product.id, image_url=data_url, thumbnail_url=data_url,
+            alt_text=product.name, source_type=source_type,
+            license_info="Uploaded/verified by Denmart administrator.", sort_order=0, is_primary=True,
+        ))
 
 
 def _dashboard():
@@ -239,6 +282,41 @@ def products():
     )
 
 
+@bp.post(f"{ADMIN_BASE}/products/resolve-images")
+@admin_required("products.edit")
+def resolve_product_images():
+    from services.product_images import resolve_product_image
+    try:
+        limit = max(1, min(int(request.form.get("limit", "80") or "80"), 120))
+    except ValueError:
+        limit = 80
+    products = Product.query.filter(
+        Product.status == "ACTIVE",
+        (Product.image_url.is_(None)) | (Product.image_url == "")
+    ).order_by(Product.name).limit(limit).all()
+    matched = 0
+    for product in products:
+        try:
+            image = resolve_product_image(product)
+        except Exception:
+            image = None
+        if image:
+            product.image_url = image
+            ProductImage.query.filter_by(product_id=product.id, is_primary=True).update({"is_primary": False})
+            db.session.add(ProductImage(
+                product_id=product.id, image_url=image, thumbnail_url=image,
+                alt_text=product.name, source_type="OPEN_FOOD_FACTS_MATCH",
+                license_info="External product image; verify supplier/rights before commercial campaigns.",
+                sort_order=0, is_primary=True,
+            ))
+            matched += 1
+    db.session.commit()
+    checked = len(products)
+    remaining = checked - matched
+    flash(f"Photo resolver checked {checked} products: {matched} verified matches; {remaining} still need an exact image/upload.", "success" if remaining == 0 else "error")
+    return redirect(url_for("admin.products"))
+
+
 @bp.post(f"{ADMIN_BASE}/products/create")
 @admin_required("products.create")
 def create_product():
@@ -251,6 +329,13 @@ def create_product():
     barcode = request.form.get("barcode", "").strip() or None
     description = request.form.get("description", "").strip() or None
     image_url = request.form.get("image_url", "").strip() or None
+    try:
+        uploaded_image = _uploaded_product_image(request.files.get("product_image"), name or "Product")
+        if uploaded_image:
+            image_url = uploaded_image
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("admin.products"))
     store_id = request.form.get("store_id", "").strip() or None
     try:
         price = Decimal(request.form.get("selling_price", "0"))
@@ -282,6 +367,8 @@ def create_product():
                       sku=sku, barcode=barcode, description=description, image_url=image_url, status="ACTIVE",
                       search_keywords=" ".join(x for x in [name.lower(), brand.lower() if brand else ""] if x))
     db.session.add(product); db.session.flush()
+    if image_url and image_url.startswith("data:image/"):
+        _set_product_image(product, image_url)
     stores = [db.session.get(Store, store_id)] if store_id else Store.query.filter_by(business_id=current_user.business_id, is_active=True).all()
     if not stores:
         db.session.rollback(); flash("Create an active mart before adding stock.", "error"); return redirect(url_for("admin.products"))
@@ -418,7 +505,19 @@ def save_product(product_id):
     product.sku = request.form.get("sku", "").strip() or None
     product.barcode = request.form.get("barcode", "").strip() or None
     product.description = request.form.get("description", "").strip() or None
-    product.image_url = request.form.get("image_url", "").strip() or None
+    submitted_image_url = request.form.get("image_url", "").strip()
+    try:
+        uploaded_image = _uploaded_product_image(request.files.get("product_image"), product.name)
+    except ValueError as exc:
+        db.session.rollback(); flash(str(exc), "error")
+        return redirect(url_for("admin.product_edit", product_id=product.id, store_id=request.form.get("store_id", "").strip()))
+    if uploaded_image:
+        _set_product_image(product, uploaded_image)
+    elif submitted_image_url:
+        _set_product_image(product, submitted_image_url, source_type="ADMIN_URL")
+    elif request.form.get("remove_image") == "1":
+        product.image_url = None
+        ProductImage.query.filter_by(product_id=product.id).delete(synchronize_session=False)
     product.status = "ACTIVE" if request.form.get("status") == "ACTIVE" else "ARCHIVED"
     product.search_keywords = " ".join(x for x in [product.name.lower(), (product.brand or "").lower(), (product.description or "").lower()] if x)
     sp_store_id = request.form.get("store_id", "").strip()

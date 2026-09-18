@@ -116,7 +116,7 @@ def seed_defaults():
 
     catalog_version = SystemSetting.query.filter_by(business_id=business.id, key="catalog_seed_version").first()
     first_catalog_boot = catalog_version is None
-    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "denmart-2026-09-16-v13")
+    refresh_catalog_assets = first_catalog_boot or (catalog_version and catalog_version.value != "denmart-2026-09-18-v17")
     if refresh_catalog_assets:
         for legacy in StoreProduct.query.filter_by(store_id=store.id).all():
             legacy.is_available = False
@@ -125,7 +125,7 @@ def seed_defaults():
         catalog_version = SystemSetting(
             business_id=business.id,
             key="catalog_seed_version",
-            value="denmart-2026-09-16-v13",
+            value="denmart-2026-09-18-v17",
         )
         db.session.add(catalog_version)
 
@@ -214,11 +214,18 @@ def seed_defaults():
                         pricing_rule_id=rule.id,
                     ))
                 elif refresh_catalog_assets:
+                    # A catalogue refresh must not overwrite live/admin prices already
+                    # entered for an existing SKU. Only fill genuinely missing price
+                    # values, then restore visibility for the new clean catalogue.
                     price = starter_price(category_name, index)
-                    sp.selling_price = price
-                    sp.cost_price = (price * Decimal("0.80")).quantize(Decimal("1"))
-                    sp.minimum_price = price
-                    sp.maximum_price = price * Decimal("1.30")
+                    if sp.selling_price is None or Decimal(str(sp.selling_price)) <= 0:
+                        sp.selling_price = price
+                    if sp.cost_price is None or Decimal(str(sp.cost_price)) < 0:
+                        sp.cost_price = (price * Decimal("0.80")).quantize(Decimal("1"))
+                    if sp.minimum_price is None or Decimal(str(sp.minimum_price)) <= 0:
+                        sp.minimum_price = sp.selling_price
+                    if sp.maximum_price is None or Decimal(str(sp.maximum_price)) <= 0:
+                        sp.maximum_price = Decimal(str(sp.selling_price)) * Decimal("1.30")
                     sp.is_available = True
                     sp.available_online = True
                     sp.available_pos = True

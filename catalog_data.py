@@ -226,7 +226,6 @@ CATALOG["Dairy, Eggs & Chilled"].extend([
     ("Daima UHT Fino Bora 500ml", "Daima", "pack"),
     ("Daima UHT Fino Bora 1L", "Daima", "pack"),
     ("Delamere Strawberry Yoghurt 500ml", "Delamere", "pack"),
-    ("Brookside Natural Yoghurt 500ml", "Brookside", "tub"),
     ("Brookside Vanilla Yoghurt 500ml", "Brookside", "tub"),
     ("Brookside Fruitness Mixed Berries Yoghurt 450ml", "Brookside", "tub"),
     ("Fresh Cream 250ml", "Various", "pack"),
@@ -238,7 +237,7 @@ CATALOG["Meat, Poultry & Fish"].extend([
     ("Omena 500g", "Fresh Fish", "pack"),
     ("Beef Sausages 1kg", "Farmers Choice", "pack"),
     ("Smokies 1kg", "Farmers Choice", "pack"),
-    ("Bacon 250g", "Farmers Choice", "pack"),
+    ("Farmers Choice Bacon 250g", "Farmers Choice", "pack"),
 ])
 CATALOG["Fresh Produce"].extend([
     ("Cooking Bananas 1kg", "Fresh Produce", "kg"),
@@ -291,6 +290,11 @@ CATALOG["Electronics & Small Appliances"] = [
     ("Phone Charging Cable USB-C", "Various", "piece"),
     ("Electric Kettle 1.7L", "Various", "piece"),
 ]
+
+
+# Expand the clean starter catalogue to a supermarket-sized Kenyan assortment.
+from catalog_expansion import expand_catalog
+CATALOG = expand_catalog(CATALOG)
 
 
 # Approximate starter price bands (KES) to make the catalogue usable immediately.

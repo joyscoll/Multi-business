@@ -70,7 +70,9 @@ def export_database_json():
     }
 
 
+# Fresh installs may have no tables yet; create the current schema before replacement.
 def restore_database_json(payload):
+    db.create_all()
     if not isinstance(payload, dict) or payload.get("format") not in {"denmart-database-v2", "real-mart-json-v1"}:
         raise ValueError("Unsupported backup format.")
     tables_data = payload.get("tables") or {}
@@ -153,7 +155,9 @@ def inspect_sqlite_tables(path: str | Path):
         conn.close()
 
 
+# Make a fresh deployment schema-ready before importing a portable snapshot.
 def restore_sqlite_snapshot(path: str | Path):
+    db.create_all()
     path = Path(path)
     if not path.exists():
         raise ValueError("SQLite backup file not found.")

@@ -4,8 +4,9 @@ from decimal import Decimal
 from PIL import Image, ImageDraw, ImageFont
 from flask import Blueprint, render_template, request, session, send_file, jsonify, Response, redirect, url_for, flash
 from extensions import db
-from models import Product, Store, StoreProduct, Category, SystemSetting, ProductAlias, Business, Order, Delivery
+from models import Product, Store, StoreProduct, Category, SystemSetting, ProductAlias, ProductImage, Business, Order, Delivery
 from services.search import forgiving_rank
+from services.product_images import resolve_product_image
 
 bp = Blueprint("shop", __name__)
 
@@ -165,10 +166,49 @@ def submit_delivery_request(order_number):
 @bp.get("/app-qr.png")
 def app_qr():
     import qrcode
-    # The QR represents the site origin, never a hard-coded Render/custom domain.
-    img = qrcode.make(request.url_root.rstrip("/"))
-    buf = BytesIO(); img.save(buf, format="PNG"); buf.seek(0)
-    return send_file(buf, mimetype="image/png", max_age=3600)
+    # The QR represents the customer-facing shop path, never a hard-coded domain.
+    target = request.url_root.rstrip("/") + "/shop"
+    img = qrcode.make(target)
+    buf = BytesIO(); img.save(buf, format="PNG", optimize=True); buf.seek(0)
+    return send_file(buf, mimetype="image/png", max_age=86400)
+
+
+@bp.get("/product-photo/<product_id>.jpg")
+def product_photo(product_id):
+    product = db.session.get(Product, product_id)
+    if not product or product.status != "ACTIVE":
+        return ("", 404)
+    if product.image_url and str(product.image_url).strip():
+        raw = str(product.image_url)
+        if raw.startswith("data:image/") and "," in raw:
+            import base64 as _b64
+            header, encoded = raw.split(",", 1)
+            try:
+                binary = _b64.b64decode(encoded)
+                mime = header.split(";", 1)[0].replace("data:", "")
+                return send_file(BytesIO(binary), mimetype=mime, max_age=86400)
+            except Exception:
+                pass
+        return redirect(raw, code=302)
+    image = resolve_product_image(product)
+    if image:
+        product.image_url = image
+        try:
+            ProductImage.query.filter_by(product_id=product.id, is_primary=True).update({"is_primary": False})
+            db.session.add(ProductImage(
+                product_id=product.id, image_url=image, thumbnail_url=image,
+                alt_text=product.name, source_type="OPEN_FOOD_FACTS_MATCH",
+                license_info="External product image; verify supplier/rights before commercial campaigns.",
+                sort_order=0, is_primary=True,
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return redirect(image, code=302)
+    # No unrelated stock art and no initials: an unresolved item stays visually clean
+    # until a verified external match or administrator upload is available.
+    svg = """<svg xmlns='http://www.w3.org/2000/svg' width='800' height='800' viewBox='0 0 800 800'><rect width='800' height='800' rx='34' fill='#f5f7f6'/><rect x='110' y='110' width='580' height='580' rx='26' fill='#fff' stroke='#dfe7e2' stroke-width='8'/><circle cx='330' cy='335' r='78' fill='#e9efeb'/><path d='M290 540h220' stroke='#cad6cf' stroke-width='20' stroke-linecap='round'/><path d='M290 585h150' stroke='#d9e2dd' stroke-width='16' stroke-linecap='round'/></svg>"""
+    return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "public, max-age=300"})
 
 
 @bp.get("/shop/manifest.webmanifest")

@@ -44,3 +44,12 @@ The authoritative database remains PostgreSQL on Render (or SQLite for local dev
 ### Bulk catalogue CSV
 
 Minimum headers: `name,selling_price`. Optional headers: `brand,sku,barcode,category,unit,pack_size,description,image_url,cost_price,stock_quantity,online,pos,enabled`.
+
+
+## v17 catalogue + media upgrades
+
+The clean starter catalogue now contains **1,300+ supermarket product identities/variants** spanning groceries, fresh food, household, beauty, baby, pet care, stationery and consumer electronics. The assortment is designed around common Kenyan supermarket departments; starter prices are placeholders and remain editable by the administrator. Existing live/admin-entered prices are preserved during a catalogue refresh.
+
+Product photos now use a strict hierarchy: an administrator can upload an exact package/product photo (normalized to an 800×800 white square for consistent cards), an administrator can enter a verified image URL, and the storefront can attempt a high-confidence product-name/brand image lookup against Open Food Facts/Open Beauty Facts/Open Products Facts. It does not intentionally substitute unrelated stock photography for a missing SKU.
+
+The public shop exposes a compact QR code for the `/shop` URL with Save/Share controls. Database recovery includes complete JSON and portable SQLite snapshots; restore creates the current schema before replacing it, including on an empty fresh deployment.

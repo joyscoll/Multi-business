@@ -149,3 +149,17 @@ body.pwa-standalone{overscroll-behavior-y:none;-webkit-touch-callout:none}
 @media(max-width:700px){.admin-form-grid,.filter-toolbar{grid-template-columns:1fr}.admin-form-grid .span-2{grid-column:auto}.store-edit-grid{grid-template-columns:1fr 1fr}.danger-panel{align-items:flex-start;flex-direction:column}}
 
 @media(max-width:900px){.agent-page{overflow:auto}.agent-shell{display:flex;flex-direction:column;min-height:100vh}.agent-sidebar{position:sticky;top:0;z-index:40;flex:0 0 auto;padding:8px}.agent-brand,.agent-sidebar-bottom,.agent-quick-status,.agent-store{display:none}.agent-nav{flex-direction:row;overflow:auto;margin:0}.agent-nav-link{white-space:nowrap;width:auto}.agent-main{height:auto;min-height:calc(100vh - 52px);overflow:visible}.agent-topbar{position:sticky;top:0;z-index:30}.agent-view{overflow:visible}.agent-sale-layout{height:auto}.agent-workcard{min-height:420px}.agent-basket{min-height:400px}}
+
+
+/* v17: trustworthy product imagery, compact shop QR and readable admin fields */
+.product-image-clean{aspect-ratio:1/1;overflow:hidden;background:#fff!important;display:flex;align-items:center;justify-content:center}
+.product-image-clean img{width:100%;height:100%;object-fit:contain;background:#fff!important;padding:8px;display:block}
+.shop-qr-chip{display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:7px 8px 7px 7px;border:1px solid rgba(255,255,255,.22);border-radius:11px;background:rgba(255,255,255,.07);max-width:430px}
+.shop-qr-chip img{width:50px;height:50px;border-radius:6px;background:#fff;display:block}.shop-qr-chip div{display:grid;gap:2px;min-width:0}.shop-qr-chip strong{font-size:.72rem}.shop-qr-chip small{font-size:.58rem;opacity:.82}.shop-qr-chip a,.shop-qr-chip button{border:0;border-radius:7px;padding:7px 8px;font-weight:900;font-size:.58rem;cursor:pointer;background:#fff;color:#1f332a;text-decoration:none}
+.shop-head-actions{display:flex;align-items:center;gap:8px}.mini-qr{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:4px}.mini-qr img{width:35px;height:35px;display:block}.mini-qr a{font-size:.58rem;font-weight:900;color:var(--green-dark);padding:0 4px}
+.recovery-note{margin-top:12px;padding:12px;border:1px solid #dbe9df;background:#f5faf7;border-radius:10px;display:grid;gap:4px}.recovery-note span{font-size:.7rem;color:var(--muted);line-height:1.45}
+.admin-page input.admin-input,.admin-page textarea.admin-input,.admin-page select.admin-input,.admin-page input,.admin-page textarea,.admin-page select{color:#24332c!important;-webkit-text-fill-color:#24332c!important;background:#fff!important;caret-color:#1f6f4a!important}
+.admin-page input::placeholder,.admin-page textarea::placeholder{color:#88958f!important;opacity:1!important;-webkit-text-fill-color:#88958f!important}.admin-page select option{color:#24332c!important;background:#fff!important}
+.admin-page input:-webkit-autofill,.admin-page textarea:-webkit-autofill,.admin-page select:-webkit-autofill{-webkit-text-fill-color:#24332c!important;box-shadow:0 0 0 1000px #fff inset!important}
+.secondary-action{background:#fff!important;color:var(--green-dark)!important;border:1px solid #bdd8c8!important}
+@media(max-width:700px){.shop-qr-chip{max-width:100%}.shop-head-actions{gap:5px}.mini-qr{padding:3px}.mini-qr img{width:30px;height:30px}}

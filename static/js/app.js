@@ -93,3 +93,10 @@
   if(document.getElementById('checkoutSummary')){const c=read();document.getElementById('checkoutSummary').innerHTML=c.map(x=>`<div class="summary-line"><span>${escapeHtml(x.name)} × ${x.qty}</span><b>${money(x.price*x.qty)}</b></div>`).join('')||'<span class="muted">No items.</span>';document.getElementById('checkoutTotal').textContent=c.reduce((s,x)=>s+x.price*x.qty,0).toFixed(2);}
   if(!location.pathname.startsWith('/control')&&!location.pathname.startsWith('/merchant')&&'serviceWorker' in navigator){navigator.serviceWorker.register('/shop/sw.js',{scope:'/'}).catch(()=>{});}
 })();
+
+
+function shareDenmartShop(){
+  const data={title:'Denmart Online Shop',text:'Shop Denmart online',url:window.location.origin+'/shop'};
+  if(navigator.share){ navigator.share(data).catch(()=>{}); return; }
+  if(navigator.clipboard){ navigator.clipboard.writeText(data.url).then(()=>alert('Denmart shop link copied.')).catch(()=>{}); }
+}
